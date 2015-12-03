@@ -20,11 +20,15 @@ package org.apache.kylin.rest.service;
 
 import static org.junit.Assert.*;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.I0Itec.zkclient.IDefaultNameSpace;
+import org.I0Itec.zkclient.ZkClient;
+import org.I0Itec.zkclient.ZkServer;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.restclient.Broadcaster;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
@@ -60,6 +64,8 @@ public class CacheServiceTest extends LocalFileMetadataTestCase {
 
     private static Server server;
 
+    private static String ZK_ADDRESS = "localhost:2199";
+    
     private static KylinConfig configA;
     private static KylinConfig configB;
 
@@ -70,10 +76,13 @@ public class CacheServiceTest extends LocalFileMetadataTestCase {
     @BeforeClass
     public static void beforeClass() throws Exception {
         staticCreateTestMetadata();
+        startZookeeper();
         configA = KylinConfig.getInstanceFromEnv();
         configA.setProperty("kylin.rest.servers", "localhost:7070");
+        configA.setProperty("kylin.zookeeper.address", ZK_ADDRESS);
         configB = KylinConfig.getKylinConfigFromInputStream(KylinConfig.getKylinPropertiesAsInputSteam());
         configB.setProperty("kylin.rest.servers", "localhost:7070");
+        configB.setProperty("kylin.zookeeper.address", ZK_ADDRESS);
         configB.setMetadataUrl("../examples/test_metadata");
 
         server = new Server(7070);
@@ -355,5 +364,21 @@ public class CacheServiceTest extends LocalFileMetadataTestCase {
             }
         }
         return false;
+    }
+
+
+    public static void startZookeeper() {
+        logger.info("STARTING Zookeeper at " + ZK_ADDRESS);
+        IDefaultNameSpace defaultNameSpace = new IDefaultNameSpace() {
+            @Override
+            public void createDefaultNameSpace(ZkClient zkClient) {
+            }
+        };
+        new File("/tmp/helix-quickstart").mkdirs();
+        // start zookeeper
+        ZkServer server =
+                new ZkServer("/tmp/helix-quickstart/dataDir", "/tmp/helix-quickstart/logDir",
+                        defaultNameSpace, 2199);
+        server.start();
     }
 }

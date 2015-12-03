@@ -207,6 +207,7 @@ public class ExecutableManager {
         }
     }
 
+    @Deprecated
     public void updateAllRunningJobsToError() {
         try {
             final List<ExecutableOutputPO> jobOutputs = executableDao.getJobOutputs();
@@ -218,6 +219,21 @@ public class ExecutableManager {
             }
         } catch (PersistentException e) {
             logger.error("error reset job status from RUNNING to ERROR", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void resumeAllRunningJobs() {
+        try {
+            final List<ExecutableOutputPO> jobOutputs = executableDao.getJobOutputs();
+            for (ExecutableOutputPO executableOutputPO : jobOutputs) {
+                if (executableOutputPO.getStatus().equalsIgnoreCase(ExecutableState.RUNNING.toString())) {
+                    executableOutputPO.setStatus(ExecutableState.READY.toString());
+                    executableDao.updateJobOutput(executableOutputPO);
+                }
+            }
+        } catch (PersistentException e) {
+            logger.error("error reset job status from RUNNING to READY", e);
             throw new RuntimeException(e);
         }
     }
