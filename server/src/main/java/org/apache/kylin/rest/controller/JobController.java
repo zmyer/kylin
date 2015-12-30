@@ -26,18 +26,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import joptsimple.internal.Strings;
 import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.common.restclient.Broadcaster;
 import org.apache.kylin.job.JobInstance;
 import org.apache.kylin.job.constant.JobStatusEnum;
 import org.apache.kylin.job.constant.JobTimeFilterEnum;
-import org.apache.kylin.job.engine.JobEngineConfig;
-import org.apache.kylin.job.impl.threadpool.DefaultScheduler;
-import org.apache.kylin.job.lock.JobLock;
-import org.apache.kylin.rest.constant.Constant;
 import org.apache.kylin.rest.exception.InternalErrorException;
+import org.apache.kylin.rest.helix.HelixJobEngineAdmin;
 import org.apache.kylin.rest.request.JobListRequest;
 import org.apache.kylin.rest.service.JobService;
 import org.slf4j.Logger;
@@ -49,6 +46,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
+
+import java.io.IOException;
+import java.util.*;
 
 /**
  * @author ysong1
@@ -63,9 +63,6 @@ public class JobController extends BasicController implements InitializingBean {
     @Autowired
     private JobService jobService;
 
-    @Autowired
-    private JobLock jobLock;
-
     /*
      * (non-Javadoc)
      * 
@@ -79,15 +76,9 @@ public class JobController extends BasicController implements InitializingBean {
         TimeZone tzone = TimeZone.getTimeZone(timeZone);
         TimeZone.setDefault(tzone);
 
-        if (System.getProperty("kylin.rest.address") == null) {
-            throw new RuntimeException("There is no -Dkylin.rest.address set; Please check bin/kylin.sh");
-        }
-
-        final String restAddress = System.getProperty("kylin.rest.address");
-        final String hostname = Preconditions.checkNotNull(restAddress.substring(0, restAddress.lastIndexOf(":")));
-        final String port = Preconditions.checkNotNull(restAddress.substring(restAddress.lastIndexOf(":") + 1));
-        final String instanceName = hostname + "_" + port;
+        final String instanceName = HelixJobEngineAdmin.getCurrentInstanceName();
         final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
+
     }
 
     /**
@@ -199,7 +190,7 @@ public class JobController extends BasicController implements InitializingBean {
         this.jobService = jobService;
     }
 
-    private void updateKylinConfig(List<String> instances) {
+    private void updateKylinCluster(List<String> instances) {
         List<String> instanceRestAddresses = Lists.newArrayList();
         for (String instanceName : instances) {
             int indexOfUnderscore = instanceName.lastIndexOf("_");
@@ -208,6 +199,7 @@ public class JobController extends BasicController implements InitializingBean {
         String restServersInCluster = Strings.join(instanceRestAddresses, ",");
         KylinConfig.getInstanceFromEnv().setProperty("kylin.rest.servers", restServersInCluster);
         System.setProperty("kylin.rest.servers", restServersInCluster);
+        Broadcaster.clearCache();
 
     }
 
