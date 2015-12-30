@@ -264,9 +264,5 @@ public class KylinConfig extends KylinConfigBase {
             out.println(key + "=" + val);
         }
     }
-    
-    public String getClusterName() {
-        return this.getOptional("kylin.cluster.name", getMetadataUrlPrefix());
-    }
 
 }
