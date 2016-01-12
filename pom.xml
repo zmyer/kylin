@@ -113,6 +113,7 @@
             org/apache/kylin/**/tools/**:**/*CLI.java
         </sonar.jacoco.excludes>
 
+        <helix.version>0.7.1</helix.version>
     </properties>
 
     <licenses>

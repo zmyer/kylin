@@ -26,15 +26,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
 
-import com.google.common.collect.Lists;
-import joptsimple.internal.Strings;
+import com.google.common.base.Preconditions;
 import org.apache.kylin.common.KylinConfig;
-import org.apache.kylin.common.restclient.Broadcaster;
 import org.apache.kylin.job.JobInstance;
 import org.apache.kylin.job.constant.JobStatusEnum;
 import org.apache.kylin.job.constant.JobTimeFilterEnum;
 import org.apache.kylin.rest.exception.InternalErrorException;
-import org.apache.kylin.rest.helix.HelixJobEngineAdmin;
+import org.apache.kylin.rest.helix.HelixClusterAdmin;
 import org.apache.kylin.rest.request.JobListRequest;
 import org.apache.kylin.rest.service.JobService;
 import org.slf4j.Logger;
@@ -51,8 +49,6 @@ import java.io.IOException;
 import java.util.*;
 
 /**
- * @author ysong1
- * @author Jack
  * 
  */
 @Controller
@@ -76,8 +72,18 @@ public class JobController extends BasicController implements InitializingBean {
         TimeZone tzone = TimeZone.getTimeZone(timeZone);
         TimeZone.setDefault(tzone);
 
-        final String instanceName = HelixJobEngineAdmin.getCurrentInstanceName();
         final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
+
+        Preconditions.checkNotNull(kylinConfig.getZookeeperAddress(), "'kylin.zookeeper.address' couldn't be null, set it in kylin.properties.");
+        final HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(kylinConfig);
+        clusterAdmin.start();
+        
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                clusterAdmin.stop();
+            }
+        }));
 
     }
 
@@ -188,19 +194,6 @@ public class JobController extends BasicController implements InitializingBean {
 
     public void setJobService(JobService jobService) {
         this.jobService = jobService;
-    }
-
-    private void updateKylinCluster(List<String> instances) {
-        List<String> instanceRestAddresses = Lists.newArrayList();
-        for (String instanceName : instances) {
-            int indexOfUnderscore = instanceName.lastIndexOf("_");
-            instanceRestAddresses.add(instanceName.substring(0, indexOfUnderscore) + ":" + instanceName.substring(indexOfUnderscore + 1));
-        }
-        String restServersInCluster = Strings.join(instanceRestAddresses, ",");
-        KylinConfig.getInstanceFromEnv().setProperty("kylin.rest.servers", restServersInCluster);
-        System.setProperty("kylin.rest.servers", restServersInCluster);
-        Broadcaster.clearCache();
-
     }
 
 }

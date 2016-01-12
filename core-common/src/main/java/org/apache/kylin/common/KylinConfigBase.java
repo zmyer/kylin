@@ -538,6 +538,34 @@ public class KylinConfigBase implements Serializable {
         return Boolean.parseBoolean(getOptional("crossdomain.enable", "true"));
     }
 
+    public String getZookeeperAddress() {
+        return this.getOptional("kylin.zookeeper.address");
+    }
+
+    public void setZookeeperAddress(String zkAddress) {
+        setProperty("kylin.zookeeper.address", zkAddress);
+    }
+    
+    public String getClusterName() {
+        return this.getOptional("kylin.cluster.name", getMetadataUrlPrefix());
+    }
+
+    public void setClusterName(String clusterName) {
+        setProperty("kylin.cluster.name", clusterName);
+    }
+    
+    public boolean isClusterController() {
+        return Boolean.parseBoolean(getOptional("kylin.cluster.controller", "true"));
+    }
+    
+    public String getRestAddress() {
+        return this.getOptional("kylin.rest.address");
+    }
+
+    public void setRestAddress(String restAddress) {
+        setProperty("kylin.rest.address", restAddress);
+    }
+    
     public String toString() {
         return getMetadataUrl();
     }

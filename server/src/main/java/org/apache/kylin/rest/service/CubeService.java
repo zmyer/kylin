@@ -56,7 +56,7 @@ import org.apache.kylin.metadata.realization.RealizationStatusEnum;
 import org.apache.kylin.metadata.realization.RealizationType;
 import org.apache.kylin.rest.constant.Constant;
 import org.apache.kylin.rest.exception.InternalErrorException;
-import org.apache.kylin.rest.helix.HelixJobEngineAdmin;
+import org.apache.kylin.rest.helix.HelixClusterAdmin;
 import org.apache.kylin.rest.request.MetricsRequest;
 import org.apache.kylin.rest.response.HBaseResponse;
 import org.apache.kylin.rest.response.MetricsResponse;
@@ -590,8 +590,8 @@ public class CubeService extends BasicService {
     public void updateOnNewSegmentReady(String cubeName) {
         logger.debug("on updateOnNewSegmentReady: " + cubeName);
         final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
-        HelixJobEngineAdmin jobEngineAdmin = HelixJobEngineAdmin.getInstance(kylinConfig.getZookeeperAddress());
-        boolean isLeaderRole = jobEngineAdmin.isLeaderRole(kylinConfig.getClusterName(), HelixJobEngineAdmin.getCurrentInstanceName());
+        HelixClusterAdmin jobEngineAdmin = HelixClusterAdmin.getInstance(kylinConfig);
+        boolean isLeaderRole = jobEngineAdmin.isLeaderRole(HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE);
         logger.debug("server is leader role ? " + isLeaderRole);
         if (isLeaderRole == true) {
             keepCubeRetention(cubeName);
