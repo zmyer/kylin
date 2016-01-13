@@ -45,10 +45,12 @@ import java.util.concurrent.ConcurrentMap;
 public class HelixClusterAdmin {
 
     public static final String RESOURCE_NAME_JOB_ENGINE = "Resource_JobEngine";
+    public static final String RESOURCE_STREAME_CUBE_PREFIX = "Resource_Streame_";
 
     public static final String MODEL_LEADER_STANDBY = "LeaderStandby";
     public static final String MODEL_ONLINE_OFFLINE = "OnlineOffline";
     public static final String TAG_JOB_ENGINE = "Tag_JobEngine";
+    public static final String TAG_STREAM_BUILDER = "Tag_StreamBuilder";
 
     private static ConcurrentMap<KylinConfig, HelixClusterAdmin> instanceMaps = Maps.newConcurrentMap();
     private HelixManager participantManager;
@@ -74,11 +76,15 @@ public class HelixClusterAdmin {
 
         // use the tag to mark node's role.
         final List<String> instanceTags = Lists.newArrayList();
-        final boolean runJobEngine = Constant.SERVER_MODE_ALL.equalsIgnoreCase(kylinConfig.getServerMode()) || Constant.SERVER_MODE_JOB.equalsIgnoreCase(kylinConfig.getServerMode());
-        if (runJobEngine) {
+        if (Constant.SERVER_MODE_ALL.equalsIgnoreCase(kylinConfig.getServerMode())) {
             instanceTags.add(HelixClusterAdmin.TAG_JOB_ENGINE);
+            instanceTags.add(HelixClusterAdmin.TAG_STREAM_BUILDER);
+        } else if (Constant.SERVER_MODE_JOB.equalsIgnoreCase(kylinConfig.getServerMode())) {
+            instanceTags.add(HelixClusterAdmin.TAG_JOB_ENGINE);
+        } else if (Constant.SERVER_MODE_STREAM.equalsIgnoreCase(kylinConfig.getServerMode())) {
+            instanceTags.add(HelixClusterAdmin.TAG_STREAM_BUILDER);
         }
-
+        
         addInstance(instanceName, instanceTags);
         startInstance(instanceName);
 
@@ -107,6 +113,16 @@ public class HelixClusterAdmin {
             admin.addResource(clusterName, HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.SEMI_AUTO.name());
         }
 
+    }
+    
+    public void addStreamCubeSlice(String cubeName, long start, long end) {
+        String resourceName = RESOURCE_STREAME_CUBE_PREFIX + cubeName + "_" + start + "_" + end;
+        if (!admin.getResourcesInCluster(clusterName).contains(resourceName)) {
+            admin.addResource(clusterName, resourceName, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.SEMI_AUTO.name());
+        }
+
+        admin.rebalance(clusterName, resourceName, 2, "", TAG_STREAM_BUILDER);
+        
     }
 
     /**
