@@ -36,14 +36,6 @@ public class BootstrapConfig {
         this.streaming = streaming;
     }
 
-    public int getPartitionId() {
-        return partitionId;
-    }
-
-    public void setPartitionId(int partitionId) {
-        this.partitionId = partitionId;
-    }
-
     public boolean isFillGap() {
         return fillGap;
     }

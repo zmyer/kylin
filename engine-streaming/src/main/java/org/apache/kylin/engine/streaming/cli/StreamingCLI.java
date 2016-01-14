@@ -72,9 +72,6 @@ public class StreamingCLI {
                 case "-streaming":
                     bootstrapConfig.setStreaming(args[++i]);
                     break;
-                case "-partition":
-                    bootstrapConfig.setPartitionId(Integer.parseInt(args[++i]));
-                    break;
                 case "-fillGap":
                     bootstrapConfig.setFillGap(Boolean.parseBoolean(args[++i]));
                     break;

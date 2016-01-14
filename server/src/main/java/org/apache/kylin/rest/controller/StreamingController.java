@@ -21,14 +21,23 @@ package org.apache.kylin.rest.controller;
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.google.common.base.Preconditions;
 import org.apache.commons.lang.StringUtils;
 import org.apache.kylin.common.util.JsonUtil;
+import org.apache.kylin.cube.CubeInstance;
+import org.apache.kylin.cube.CubeSegment;
+import org.apache.kylin.cube.model.CubeBuildTypeEnum;
+import org.apache.kylin.engine.streaming.BootstrapConfig;
 import org.apache.kylin.engine.streaming.StreamingConfig;
+import org.apache.kylin.job.JobInstance;
+import org.apache.kylin.job.exception.JobException;
 import org.apache.kylin.rest.exception.BadRequestException;
 import org.apache.kylin.rest.exception.ForbiddenException;
 import org.apache.kylin.rest.exception.InternalErrorException;
 import org.apache.kylin.rest.exception.NotFoundException;
+import org.apache.kylin.rest.request.StreamingBuildRequest;
 import org.apache.kylin.rest.request.StreamingRequest;
+import org.apache.kylin.rest.service.CubeService;
 import org.apache.kylin.rest.service.KafkaConfigService;
 import org.apache.kylin.rest.service.StreamingService;
 import org.apache.kylin.source.kafka.config.KafkaConfig;
@@ -36,6 +45,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
@@ -57,6 +67,9 @@ public class StreamingController extends BasicController {
     private StreamingService streamingService;
     @Autowired
     private KafkaConfigService kafkaConfigService;
+
+    @Autowired
+    private CubeService cubeService;
 
     @RequestMapping(value = "/getConfig", method = { RequestMethod.GET })
     @ResponseBody
@@ -212,6 +225,43 @@ public class StreamingController extends BasicController {
     private void updateRequest(StreamingRequest request, boolean success, String message) {
         request.setSuccessful(success);
         request.setMessage(message);
+    }
+
+
+
+    /**
+     * Send a stream build request
+     *
+     * @param cubeName Cube ID
+     * @return
+     * @throws IOException
+     */
+    @RequestMapping(value = "/{streamingName}/build", method = {RequestMethod.PUT})
+    @ResponseBody
+    public StreamingBuildRequest buildStream(@PathVariable String streamingName, @RequestBody StreamingBuildRequest streamingBuildRequest) {
+        streamingBuildRequest.setStreaming(streamingName);
+        StreamingConfig streamingConfig = streamingService.getStreamingManager().getConfig(streamingName);
+        Preconditions.checkNotNull(streamingConfig, "Stream config '" + streamingName + "' is not found.");
+        String cubeName = streamingConfig.getCubeName();
+        List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
+        Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
+        CubeInstance cube = cubes.get(0);
+        if (streamingBuildRequest.isFillGap() == false) {
+            Preconditions.checkArgument(streamingBuildRequest.getEnd() > streamingBuildRequest.getStart(), "End time should be greater than start time.");
+            for (CubeSegment segment : cube.getSegments()) {
+                if (segment.getDateRangeStart() <= streamingBuildRequest.getStart() && segment.getDateRangeEnd() >= streamingBuildRequest.getEnd()) {
+                    streamingBuildRequest.setMessage("The segment already exists: " + segment.toString());
+                    streamingBuildRequest.setSuccessful(false);
+                    return streamingBuildRequest;
+                }
+            }
+        }
+
+        streamingService.buildStream(streamingName, streamingBuildRequest);
+        streamingBuildRequest.setMessage("Build request is submitted successfully.");
+        streamingBuildRequest.setSuccessful(true);
+        return streamingBuildRequest;
+
     }
 
     public void setStreamingService(StreamingService streamingService) {

@@ -16,39 +16,23 @@
  * limitations under the License.
  */
 
-
 package org.apache.kylin.rest.request;
 
-import java.lang.String;
+public class StreamingBuildRequest {
 
-public class StreamingRequest {
-
-    private String project;
-
-    private String tableData;
-
-    private String streamingConfig;
-
-    private String kafkaConfig;
-
+    private String streaming;
+    private long start;
+    private long end;
+    private boolean fillGap;
+    private String message;
     private boolean successful;
 
-    private String message;
-
-    public String getProject() {
-        return project;
+    public String getStreaming() {
+        return streaming;
     }
 
-    public void setProject(String project) {
-        this.project = project;
-    }
-
-    public String getTableData() {
-        return tableData;
-    }
-
-    public void setTableData(String tableData) {
-        this.tableData = tableData;
+    public void setStreaming(String streaming) {
+        this.streaming = streaming;
     }
 
     public boolean isSuccessful() {
@@ -67,20 +51,27 @@ public class StreamingRequest {
         this.message = message;
     }
 
-    public String getStreamingConfig() {
-        return streamingConfig;
+    public long getStart() {
+        return start;
     }
 
-    public void setStreamingConfig(String streamingConfig) {
-        this.streamingConfig = streamingConfig;
+    public void setStart(long start) {
+        this.start = start;
     }
 
-    public String getKafkaConfig() {
-        return kafkaConfig;
+    public long getEnd() {
+        return end;
     }
 
-    public void setKafkaConfig(String kafkaConfig) {
-        this.kafkaConfig = kafkaConfig;
+    public void setEnd(long end) {
+        this.end = end;
     }
 
+    public boolean isFillGap() {
+        return fillGap;
+    }
+
+    public void setFillGap(boolean fillGap) {
+        this.fillGap = fillGap;
+    }
 }

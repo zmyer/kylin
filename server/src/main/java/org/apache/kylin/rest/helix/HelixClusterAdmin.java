@@ -45,7 +45,7 @@ import java.util.concurrent.ConcurrentMap;
 public class HelixClusterAdmin {
 
     public static final String RESOURCE_NAME_JOB_ENGINE = "Resource_JobEngine";
-    public static final String RESOURCE_STREAME_CUBE_PREFIX = "Resource_Streame_";
+    public static final String RESOURCE_STREAME_CUBE_PREFIX = "Resource_Stream_";
 
     public static final String MODEL_LEADER_STANDBY = "LeaderStandby";
     public static final String MODEL_ONLINE_OFFLINE = "OnlineOffline";
@@ -115,14 +115,21 @@ public class HelixClusterAdmin {
 
     }
     
-    public void addStreamCubeSlice(String cubeName, long start, long end) {
-        String resourceName = RESOURCE_STREAME_CUBE_PREFIX + cubeName + "_" + start + "_" + end;
+    public void addStreamingJob(String streamingName, long start, long end) {
+        String resourceName = RESOURCE_STREAME_CUBE_PREFIX + streamingName + "_" + start + "_" + end;
         if (!admin.getResourcesInCluster(clusterName).contains(resourceName)) {
             admin.addResource(clusterName, resourceName, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.SEMI_AUTO.name());
+        } else {
+            logger.warn("Resource '" + resourceName + "' already exists in cluster, skip adding.");
         }
 
         admin.rebalance(clusterName, resourceName, 2, "", TAG_STREAM_BUILDER);
         
+    }
+    
+    public void dropStreamingJob(String streamingName, long start, long end) {
+        String resourceName = RESOURCE_STREAME_CUBE_PREFIX + streamingName + "_" + start + "_" + end;
+        admin.dropResource(clusterName, resourceName);
     }
 
     /**
