@@ -10,6 +10,10 @@ import org.apache.helix.model.Message;
 import org.apache.helix.participant.statemachine.Transition;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.KylinConfigBase;
+import org.apache.kylin.cube.CubeInstance;
+import org.apache.kylin.cube.CubeManager;
+import org.apache.kylin.cube.CubeSegment;
+import org.apache.kylin.engine.streaming.StreamingManager;
 import org.apache.kylin.job.engine.JobEngineConfig;
 import org.apache.kylin.job.impl.threadpool.DefaultScheduler;
 import org.apache.kylin.job.lock.MockJobLock;
@@ -48,7 +52,7 @@ public class LeaderStandbyStateModelFactory extends StateTransitionHandlerFactor
         public void onBecomeLeaderFromStandby(Message message, NotificationContext context) {
             logger.info("JobEngineStateModel.onBecomeLeaderFromStandby()");
             try {
-                KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
+                final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
                 DefaultScheduler scheduler = DefaultScheduler.createInstance();
                 scheduler.init(new JobEngineConfig(kylinConfig), new MockJobLock());
                 while (!scheduler.hasStarted()) {
@@ -89,11 +93,22 @@ public class LeaderStandbyStateModelFactory extends StateTransitionHandlerFactor
         public void onBecomeLeaderFromStandby(Message message, NotificationContext context) {
             String resourceName = message.getResourceId().stringify();
             Preconditions.checkArgument(resourceName.startsWith(RESOURCE_STREAME_CUBE_PREFIX));
-            long end = Long.parseLong(resourceName.substring(resourceName.lastIndexOf("_")) + 1);
+            long end = Long.parseLong(resourceName.substring(resourceName.lastIndexOf("_") + 1));
             String temp = resourceName.substring(RESOURCE_STREAME_CUBE_PREFIX.length(), resourceName.lastIndexOf("_"));
-            long start = Long.parseLong(temp.substring(temp.lastIndexOf("_")) + 1);
+            long start = Long.parseLong(temp.substring(temp.lastIndexOf("_") + 1));
             String streamingConfig = temp.substring(0, temp.lastIndexOf("_"));
 
+            final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
+            
+            final String cubeName = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamingConfig).getCubeName();
+            final CubeInstance cube = CubeManager.getInstance(kylinConfig).getCube(cubeName);
+            for (CubeSegment segment : cube.getSegments()) {
+                if (segment.getDateRangeStart() <= start && segment.getDateRangeEnd() >= end) {
+                    logger.info("Segment " + segment.getName() + " already exist, no need rebuild.");
+                    return;
+                }
+            }
+            
             KylinConfigBase.getKylinHome();
             String segmentId = start + "_" + end;
             String cmd = KylinConfigBase.getKylinHome() + "/bin/kylin.sh streaming start " + streamingConfig + " " + segmentId + " -oneoff true -start " + start + " -end " + end + " -streaming " + streamingConfig;

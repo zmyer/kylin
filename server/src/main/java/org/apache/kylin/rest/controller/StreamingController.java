@@ -236,13 +236,11 @@ public class StreamingController extends BasicController {
      * @return
      * @throws IOException
      */
-    @RequestMapping(value = "/{streamingName}/build", method = {RequestMethod.PUT})
+    @RequestMapping(value = "/{cubeName}/build", method = {RequestMethod.PUT})
     @ResponseBody
-    public StreamingBuildRequest buildStream(@PathVariable String streamingName, @RequestBody StreamingBuildRequest streamingBuildRequest) {
-        streamingBuildRequest.setStreaming(streamingName);
-        StreamingConfig streamingConfig = streamingService.getStreamingManager().getConfig(streamingName);
-        Preconditions.checkNotNull(streamingConfig, "Stream config '" + streamingName + "' is not found.");
-        String cubeName = streamingConfig.getCubeName();
+    public StreamingBuildRequest buildStream(@PathVariable String cubeName, @RequestBody StreamingBuildRequest streamingBuildRequest) {
+        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCube(cubeName);
+        Preconditions.checkNotNull(streamingConfig, "Stream config for '" + cubeName + "' is not found.");
         List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
         Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
         CubeInstance cube = cubes.get(0);
@@ -257,7 +255,8 @@ public class StreamingController extends BasicController {
             }
         }
 
-        streamingService.buildStream(streamingName, streamingBuildRequest);
+        streamingBuildRequest.setStreaming(streamingConfig.getName());
+        streamingService.buildStream(cubeName, streamingBuildRequest);
         streamingBuildRequest.setMessage("Build request is submitted successfully.");
         streamingBuildRequest.setSuccessful(true);
         return streamingBuildRequest;
