@@ -76,13 +76,10 @@ public class CacheServiceTest extends LocalFileMetadataTestCase {
     @BeforeClass
     public static void beforeClass() throws Exception {
         staticCreateTestMetadata();
-        startZookeeper();
         configA = KylinConfig.getInstanceFromEnv();
         configA.setProperty("kylin.rest.servers", "localhost:7070");
-        configA.setProperty("kylin.zookeeper.address", ZK_ADDRESS);
         configB = KylinConfig.getKylinConfigFromInputStream(KylinConfig.getKylinPropertiesAsInputSteam());
         configB.setProperty("kylin.rest.servers", "localhost:7070");
-        configB.setProperty("kylin.zookeeper.address", ZK_ADDRESS);
         configB.setMetadataUrl("../examples/test_metadata");
 
         server = new Server(7070);
@@ -366,19 +363,4 @@ public class CacheServiceTest extends LocalFileMetadataTestCase {
         return false;
     }
 
-
-    public static void startZookeeper() {
-        logger.info("STARTING Zookeeper at " + ZK_ADDRESS);
-        IDefaultNameSpace defaultNameSpace = new IDefaultNameSpace() {
-            @Override
-            public void createDefaultNameSpace(ZkClient zkClient) {
-            }
-        };
-        new File("/tmp/helix-quickstart").mkdirs();
-        // start zookeeper
-        ZkServer server =
-                new ZkServer("/tmp/helix-quickstart/dataDir", "/tmp/helix-quickstart/logDir",
-                        defaultNameSpace, 2199);
-        server.start();
-    }
 }

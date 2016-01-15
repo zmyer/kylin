@@ -553,13 +553,17 @@ public class KylinConfigBase implements Serializable {
     public void setClusterName(String clusterName) {
         setProperty("kylin.cluster.name", clusterName);
     }
+
+    public boolean isClusterEnabled() {
+        return Boolean.parseBoolean(getOptional("kylin.cluster.enabled", "false"));
+    }
     
     public boolean isClusterController() {
         return Boolean.parseBoolean(getOptional("kylin.cluster.controller", "true"));
     }
     
     public String getRestAddress() {
-        return this.getOptional("kylin.rest.address");
+        return this.getOptional("kylin.rest.address", "localhost:7070");
     }
 
     public void setRestAddress(String restAddress) {

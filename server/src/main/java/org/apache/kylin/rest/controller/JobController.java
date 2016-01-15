@@ -18,23 +18,17 @@
 
 package org.apache.kylin.rest.controller;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.TimeZone;
-
-import com.google.common.base.Preconditions;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.job.JobInstance;
 import org.apache.kylin.job.constant.JobStatusEnum;
 import org.apache.kylin.job.constant.JobTimeFilterEnum;
+import org.apache.kylin.job.engine.JobEngineConfig;
+import org.apache.kylin.job.impl.threadpool.DefaultScheduler;
 import org.apache.kylin.rest.exception.InternalErrorException;
 import org.apache.kylin.rest.helix.HelixClusterAdmin;
 import org.apache.kylin.rest.request.JobListRequest;
 import org.apache.kylin.rest.service.JobService;
+import org.apache.kylin.storage.hbase.util.ZookeeperJobLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
@@ -74,16 +68,34 @@ public class JobController extends BasicController implements InitializingBean {
 
         final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
 
-        Preconditions.checkNotNull(kylinConfig.getZookeeperAddress(), "'kylin.zookeeper.address' couldn't be null, set it in kylin.properties.");
-        final HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(kylinConfig);
-        clusterAdmin.start();
-        
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                clusterAdmin.stop();
-            }
-        }));
+        if (kylinConfig.isClusterEnabled() == true) {
+            logger.info("Kylin cluster enabled, will use Helix/zookeeper to coordinate.");
+            final HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(kylinConfig);
+            clusterAdmin.start();
+
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    clusterAdmin.stop();
+                }
+            }));
+        } else {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        DefaultScheduler scheduler = DefaultScheduler.createInstance();
+                        scheduler.init(new JobEngineConfig(kylinConfig), new ZookeeperJobLock());
+                        if (!scheduler.hasStarted()) {
+                            logger.error("scheduler has not been started");
+                            System.exit(1);
+                        }
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            }).start();
+        }
 
     }
 

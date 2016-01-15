@@ -55,12 +55,12 @@ public class DefaultScheduler implements Scheduler<AbstractExecutable>, Connecti
     private ExecutorService jobPool;
     private DefaultContext context;
 
-    private Logger logger = LoggerFactory.getLogger(DefaultScheduler.class);
+    private static final Logger logger = LoggerFactory.getLogger(DefaultScheduler.class);
     private volatile boolean initialized = false;
     private volatile boolean hasStarted = false;
     private JobEngineConfig jobEngineConfig;
 
-    private static final DefaultScheduler INSTANCE = new DefaultScheduler();
+    private static DefaultScheduler INSTANCE;
 
     private DefaultScheduler() {
     }
@@ -134,10 +134,6 @@ public class DefaultScheduler implements Scheduler<AbstractExecutable>, Connecti
         }
     }
 
-    public static DefaultScheduler getInstance() {
-        return INSTANCE;
-    }
-
     @Override
     public void stateChanged(CuratorFramework client, ConnectionState newState) {
         if ((newState == ConnectionState.SUSPENDED) || (newState == ConnectionState.LOST)) {
@@ -145,6 +141,25 @@ public class DefaultScheduler implements Scheduler<AbstractExecutable>, Connecti
                 shutdown();
             } catch (SchedulerException e) {
                 throw new RuntimeException("failed to shutdown scheduler", e);
+            }
+        }
+    }
+
+    public synchronized static DefaultScheduler createInstance() {
+        destroyInstance();
+        INSTANCE = new DefaultScheduler();
+        return INSTANCE;
+    }
+
+    public synchronized static void destroyInstance() {
+        DefaultScheduler tmp = INSTANCE;
+        INSTANCE = null;
+        if (tmp != null) {
+            try {
+                tmp.shutdown();
+            } catch (SchedulerException e) {
+                logger.error("error stop DefaultScheduler", e);
+                throw new RuntimeException(e);
             }
         }
     }

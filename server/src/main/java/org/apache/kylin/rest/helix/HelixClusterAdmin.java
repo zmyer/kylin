@@ -18,10 +18,11 @@
 package org.apache.kylin.rest.helix;
 
 import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import joptsimple.internal.Strings;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.helix.*;
 import org.apache.helix.api.id.StateModelDefId;
 import org.apache.helix.controller.HelixControllerMain;
@@ -30,7 +31,10 @@ import org.apache.helix.model.*;
 import org.apache.helix.tools.StateModelConfigGenerator;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.restclient.Broadcaster;
+import org.apache.kylin.common.util.StringUtil;
 import org.apache.kylin.rest.constant.Constant;
+import org.apache.kylin.storage.hbase.HBaseConnection;
+import org.apache.kylin.storage.hbase.util.ZookeeperJobLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,7 +69,14 @@ public class HelixClusterAdmin {
 
     private HelixClusterAdmin(KylinConfig kylinConfig) {
         this.kylinConfig = kylinConfig;
-        this.zkAddress = kylinConfig.getZookeeperAddress();
+
+        if (kylinConfig.getZookeeperAddress() != null) {
+            this.zkAddress = kylinConfig.getZookeeperAddress();
+        } else {
+            zkAddress = HBaseConnection.getZKConnectString();
+            logger.info("no 'kylin.zookeeper.address' in kylin.properties, use HBase zookeeper " + zkAddress);
+        }
+        
         this.clusterName = kylinConfig.getClusterName();
         this.admin = new ZKHelixAdmin(zkAddress);
     }
@@ -84,7 +95,7 @@ public class HelixClusterAdmin {
         } else if (Constant.SERVER_MODE_STREAM.equalsIgnoreCase(kylinConfig.getServerMode())) {
             instanceTags.add(HelixClusterAdmin.TAG_STREAM_BUILDER);
         }
-        
+
         addInstance(instanceName, instanceTags);
         startInstance(instanceName);
 
@@ -114,7 +125,7 @@ public class HelixClusterAdmin {
         }
 
     }
-    
+
     public void addStreamingJob(String streamingName, long start, long end) {
         String resourceName = RESOURCE_STREAME_CUBE_PREFIX + streamingName + "_" + start + "_" + end;
         if (!admin.getResourcesInCluster(clusterName).contains(resourceName)) {
@@ -124,9 +135,9 @@ public class HelixClusterAdmin {
         }
 
         admin.rebalance(clusterName, resourceName, 2, "", TAG_STREAM_BUILDER);
-        
+
     }
-    
+
     public void dropStreamingJob(String streamingName, long start, long end) {
         String resourceName = RESOURCE_STREAME_CUBE_PREFIX + streamingName + "_" + start + "_" + end;
         admin.dropResource(clusterName, resourceName);
@@ -258,7 +269,7 @@ public class HelixClusterAdmin {
                 int indexOfUnderscore = instanceName.lastIndexOf("_");
                 instanceRestAddresses.add(instanceName.substring(0, indexOfUnderscore) + ":" + instanceName.substring(indexOfUnderscore + 1));
             }
-            String restServersInCluster = Strings.join(instanceRestAddresses, ",");
+            String restServersInCluster = StringUtil.join(instanceRestAddresses, ",");
             kylinConfig.setProperty("kylin.rest.servers", restServersInCluster);
             System.setProperty("kylin.rest.servers", restServersInCluster);
             logger.info("kylin.rest.servers update to " + restServersInCluster);

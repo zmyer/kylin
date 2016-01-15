@@ -464,14 +464,22 @@
       	    		<groupId>org.apache.httpcomponents</groupId>
 	              <artifactId>httpclient</artifactId>
  	          	  <version>${apache-httpclient.version}</version>
- 	     	    </dependency>
-
+            </dependency>
             <dependency>
                 <groupId>org.roaringbitmap</groupId>
                 <artifactId>RoaringBitmap</artifactId>
                 <version>${roaring.version}</version>
             </dependency>
-
+            <dependency>
+                <groupId>org.apache.helix</groupId>
+                <artifactId>helix-core</artifactId>
+                <version>${helix.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.helix</groupId>
+                <artifactId>helix-examples</artifactId>
+                <version>${helix.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

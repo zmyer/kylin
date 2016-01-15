@@ -54,10 +54,10 @@ public class HelixClusterAdminTest extends LocalFileMetadataTestCase {
     public void setup() throws Exception {
         createTestMetadata();
         // start zookeeper on localhost
-        final File tmpDir = new File("/tmp/helix-quickstart");
+        final File tmpDir = File.createTempFile("HelixClusterAdminTest", null); 
         FileUtil.fullyDelete(tmpDir);
         tmpDir.mkdirs();
-        server = new ZkServer("/tmp/helix-quickstart/dataDir", "/tmp/helix-quickstart/logDir", new IDefaultNameSpace() {
+        server = new ZkServer(tmpDir.getAbsolutePath() + "/dataDir", tmpDir.getAbsolutePath() + "/logDir", new IDefaultNameSpace() {
             @Override
             public void createDefaultNameSpace(ZkClient zkClient) {
             }

@@ -1,10 +1,5 @@
 package org.apache.kylin.storage.hbase.util;
 
-import java.util.Arrays;
-import java.util.concurrent.TimeUnit;
-
-import javax.annotation.Nullable;
-
 import org.apache.commons.lang.StringUtils;
 import org.apache.curator.RetryPolicy;
 import org.apache.curator.framework.CuratorFramework;
@@ -12,16 +7,13 @@ import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.framework.imps.CuratorFrameworkState;
 import org.apache.curator.framework.recipes.locks.InterProcessMutex;
 import org.apache.curator.retry.ExponentialBackoffRetry;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.HConstants;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.job.lock.JobLock;
 import org.apache.kylin.storage.hbase.HBaseConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Iterables;
+import java.util.concurrent.TimeUnit;
 
 /**
  */
@@ -37,7 +29,7 @@ public class ZookeeperJobLock implements JobLock {
     @Override
     public boolean lock() {
         this.scheduleID = schedulerId();
-        String zkConnectString = getZKConnectString();
+        String zkConnectString = HBaseConnection.getZKConnectString();
         logger.info("zk connection string:" + zkConnectString);
         logger.info("schedulerId:" + scheduleID);
         if (StringUtils.isEmpty(zkConnectString)) {
@@ -65,19 +57,6 @@ public class ZookeeperJobLock implements JobLock {
     @Override
     public void unlock() {
         releaseLock();
-    }
-
-    private String getZKConnectString() {
-        Configuration conf = HBaseConnection.getCurrentHBaseConfiguration();
-        final String serverList = conf.get(HConstants.ZOOKEEPER_QUORUM);
-        final String port = conf.get(HConstants.ZOOKEEPER_CLIENT_PORT);
-        return org.apache.commons.lang3.StringUtils.join(Iterables.transform(Arrays.asList(serverList.split(",")), new Function<String, String>() {
-            @Nullable
-            @Override
-            public String apply(String input) {
-                return input + ":" + port;
-            }
-        }), ",");
     }
 
     private void releaseLock() {
