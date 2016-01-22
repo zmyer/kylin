@@ -41,15 +41,6 @@ public class UserControllerTest extends ServiceTestBase {
 
     private UserController userController;
 
-    @BeforeClass
-    public static void setupResource() {
-        staticCreateTestMetadata();
-        List<GrantedAuthority> authorities = new ArrayList<GrantedAuthority>();
-        User user = new User("ADMIN", "ADMIN", authorities);
-        Authentication authentication = new TestingAuthenticationToken(user, "ADMIN", "ROLE_ADMIN");
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-    }
-
     @Before
     public void setup() throws Exception {
         super.setup();

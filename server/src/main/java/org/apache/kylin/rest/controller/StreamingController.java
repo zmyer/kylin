@@ -26,11 +26,7 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.kylin.common.util.JsonUtil;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeSegment;
-import org.apache.kylin.cube.model.CubeBuildTypeEnum;
-import org.apache.kylin.engine.streaming.BootstrapConfig;
 import org.apache.kylin.engine.streaming.StreamingConfig;
-import org.apache.kylin.job.JobInstance;
-import org.apache.kylin.job.exception.JobException;
 import org.apache.kylin.rest.exception.BadRequestException;
 import org.apache.kylin.rest.exception.ForbiddenException;
 import org.apache.kylin.rest.exception.InternalErrorException;
@@ -45,7 +41,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
@@ -93,7 +88,6 @@ public class StreamingController extends BasicController {
         }
     }
 
-
     /**
      *
      * create Streaming Schema
@@ -105,7 +99,7 @@ public class StreamingController extends BasicController {
         //Update Model
         StreamingConfig streamingConfig = deserializeSchemalDesc(streamingRequest);
         KafkaConfig kafkaConfig = deserializeKafkaSchemalDesc(streamingRequest);
-        if (streamingConfig == null ||kafkaConfig == null) {
+        if (streamingConfig == null || kafkaConfig == null) {
             return streamingRequest;
         }
         if (StringUtils.isEmpty(streamingConfig.getName())) {
@@ -124,7 +118,7 @@ public class StreamingController extends BasicController {
         try {
             kafkaConfig.setUuid(UUID.randomUUID().toString());
             kafkaConfigService.createKafkaConfig(kafkaConfig);
-        }catch (IOException e){
+        } catch (IOException e) {
             try {
                 streamingService.dropStreamingConfig(streamingConfig);
             } catch (IOException e1) {
@@ -139,7 +133,7 @@ public class StreamingController extends BasicController {
 
     @RequestMapping(value = "", method = { RequestMethod.PUT })
     @ResponseBody
-        public StreamingRequest updateModelDesc(@RequestBody StreamingRequest streamingRequest) throws JsonProcessingException {
+    public StreamingRequest updateModelDesc(@RequestBody StreamingRequest streamingRequest) throws JsonProcessingException {
         StreamingConfig streamingConfig = deserializeSchemalDesc(streamingRequest);
         KafkaConfig kafkaConfig = deserializeKafkaSchemalDesc(streamingRequest);
 
@@ -156,7 +150,7 @@ public class StreamingController extends BasicController {
         }
         try {
             kafkaConfig = kafkaConfigService.updateKafkaConfig(kafkaConfig);
-        }catch (AccessDeniedException accessDeniedException) {
+        } catch (AccessDeniedException accessDeniedException) {
             throw new ForbiddenException("You don't have right to update this KafkaConfig.");
         } catch (Exception e) {
             logger.error("Failed to deal with the request:" + e.getLocalizedMessage(), e);
@@ -203,7 +197,6 @@ public class StreamingController extends BasicController {
         return desc;
     }
 
-
     private KafkaConfig deserializeKafkaSchemalDesc(StreamingRequest streamingRequest) {
         KafkaConfig desc = null;
         try {
@@ -227,16 +220,14 @@ public class StreamingController extends BasicController {
         request.setMessage(message);
     }
 
-
-
     /**
      * Send a stream build request
      *
-     * @param cubeName Cube ID
+     * @param cubeName Cube Name
      * @return
      * @throws IOException
      */
-    @RequestMapping(value = "/{cubeName}/build", method = {RequestMethod.PUT})
+    @RequestMapping(value = "/{cubeName}/build", method = { RequestMethod.PUT })
     @ResponseBody
     public StreamingBuildRequest buildStream(@PathVariable String cubeName, @RequestBody StreamingBuildRequest streamingBuildRequest) {
         StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCube(cubeName);
@@ -244,27 +235,54 @@ public class StreamingController extends BasicController {
         List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
         Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
         CubeInstance cube = cubes.get(0);
-        if (streamingBuildRequest.isFillGap() == false) {
-            Preconditions.checkArgument(streamingBuildRequest.getEnd() > streamingBuildRequest.getStart(), "End time should be greater than start time.");
-            for (CubeSegment segment : cube.getSegments()) {
-                if (segment.getDateRangeStart() <= streamingBuildRequest.getStart() && segment.getDateRangeEnd() >= streamingBuildRequest.getEnd()) {
-                    streamingBuildRequest.setMessage("The segment already exists: " + segment.toString());
-                    streamingBuildRequest.setSuccessful(false);
-                    return streamingBuildRequest;
-                }
+        if (streamingBuildRequest.getEnd() <= streamingBuildRequest.getStart()) {
+            streamingBuildRequest.setMessage("End time should be greater than start time.");streamingBuildRequest.setSuccessful(false);
+            return streamingBuildRequest;
+        }
+
+        for (CubeSegment segment : cube.getSegments()) {
+            if (segment.getDateRangeStart() <= streamingBuildRequest.getStart() && segment.getDateRangeEnd() >= streamingBuildRequest.getEnd()) {
+                streamingBuildRequest.setMessage("The segment already exists: " + segment.toString());
+                streamingBuildRequest.setSuccessful(false);
+                return streamingBuildRequest;
             }
         }
 
         streamingBuildRequest.setStreaming(streamingConfig.getName());
-        streamingService.buildStream(cubeName, streamingBuildRequest);
+        streamingService.buildStream(cube, streamingBuildRequest);
         streamingBuildRequest.setMessage("Build request is submitted successfully.");
         streamingBuildRequest.setSuccessful(true);
         return streamingBuildRequest;
 
     }
 
+    /**
+     * Send a stream fillGap request
+     *
+     * @param cubeName Cube Name
+     * @return
+     * @throws IOException
+     */
+    @RequestMapping(value = "/{cubeName}/fillgap", method = { RequestMethod.PUT })
+    @ResponseBody
+    public StreamingBuildRequest fillGap(@PathVariable String cubeName) {
+        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCube(cubeName);
+        Preconditions.checkNotNull(streamingConfig, "Stream config for '" + cubeName + "' is not found.");
+        List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
+        Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
+        CubeInstance cube = cubes.get(0);
+
+        StreamingBuildRequest streamingBuildRequest = new StreamingBuildRequest();
+        streamingBuildRequest.setStreaming(streamingConfig.getName());
+        streamingService.fillGap(cube);
+        streamingBuildRequest.setMessage("FillGap request is submitted successfully.");
+        streamingBuildRequest.setSuccessful(true);
+        return streamingBuildRequest;
+
+    }
+
     public void setStreamingService(StreamingService streamingService) {
-        this.streamingService= streamingService;
+        this.streamingService = streamingService;
     }
 
     public void setKafkaConfigService(KafkaConfigService kafkaConfigService) {

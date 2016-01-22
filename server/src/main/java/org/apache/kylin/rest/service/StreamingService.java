@@ -21,7 +21,6 @@ package org.apache.kylin.rest.service;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.cube.CubeInstance;
-import org.apache.kylin.engine.streaming.BootstrapConfig;
 import org.apache.kylin.engine.streaming.StreamingConfig;
 import org.apache.kylin.engine.streaming.StreamingManager;
 import org.apache.kylin.engine.streaming.monitor.StreamingMonitor;
@@ -54,8 +53,8 @@ public class StreamingService extends BasicService {
         if (null == cubeInstance) {
             streamingConfigs = getStreamingManager().listAllStreaming();
         } else {
-            for(StreamingConfig config : getStreamingManager().listAllStreaming()){
-                if(cubeInstance.getName().equals(config.getCubeName())){
+            for (StreamingConfig config : getStreamingManager().listAllStreaming()) {
+                if (cubeInstance.getName().equals(config.getCubeName())) {
                     streamingConfigs.add(config);
                 }
             }
@@ -84,34 +83,35 @@ public class StreamingService extends BasicService {
         if (getStreamingManager().getStreamingConfig(config.getName()) != null) {
             throw new InternalErrorException("The streamingConfig named " + config.getName() + " already exists");
         }
-        StreamingConfig streamingConfig =  getStreamingManager().saveStreamingConfig(config);
+        StreamingConfig streamingConfig = getStreamingManager().saveStreamingConfig(config);
         return streamingConfig;
     }
 
-//    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#desc, 'ADMINISTRATION') or hasPermission(#desc, 'MANAGEMENT')")
+    //    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#desc, 'ADMINISTRATION') or hasPermission(#desc, 'MANAGEMENT')")
     public StreamingConfig updateStreamingConfig(StreamingConfig config) throws IOException {
         return getStreamingManager().updateStreamingConfig(config);
     }
 
-//    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#desc, 'ADMINISTRATION') or hasPermission(#desc, 'MANAGEMENT')")
+    //    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#desc, 'ADMINISTRATION') or hasPermission(#desc, 'MANAGEMENT')")
     public void dropStreamingConfig(StreamingConfig config) throws IOException {
         getStreamingManager().removeStreamingConfig(config);
     }
 
-
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'OPERATION') or hasPermission(#cube, 'MANAGEMENT')")
-    public void buildStream(String cube, StreamingBuildRequest streamingBuildRequest) {
+    public void buildStream(CubeInstance cube, StreamingBuildRequest streamingBuildRequest) {
         HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(KylinConfig.getInstanceFromEnv());
-        if (streamingBuildRequest.isFillGap()) {
-            final StreamingConfig streamingConfig = StreamingManager.getInstance(KylinConfig.getInstanceFromEnv()).getStreamingConfig(streamingBuildRequest.getStreaming());
-            final List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(streamingConfig.getCubeName());
-            logger.info("all gaps:" + org.apache.commons.lang3.StringUtils.join(gaps, ","));
-            for (Pair<Long, Long> gap : gaps) {
-                clusterAdmin.addStreamingJob(streamingBuildRequest.getStreaming(), gap.getFirst(), gap.getSecond());
-            }
-        } else {
-            clusterAdmin.addStreamingJob(streamingBuildRequest.getStreaming(), streamingBuildRequest.getStart(), streamingBuildRequest.getEnd());
-        }
+        clusterAdmin.addStreamingJob(streamingBuildRequest);
     }
 
+    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'OPERATION') or hasPermission(#cube, 'MANAGEMENT')")
+    public void fillGap(CubeInstance cube) {
+        HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(KylinConfig.getInstanceFromEnv());
+        final StreamingConfig streamingConfig = StreamingManager.getInstance(KylinConfig.getInstanceFromEnv()).getStreamingConfigByCube(cube.getName());
+        final List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(streamingConfig.getCubeName());
+        logger.info("all gaps:" + org.apache.commons.lang3.StringUtils.join(gaps, ","));
+        for (Pair<Long, Long> gap : gaps) {
+            StreamingBuildRequest streamingBuildRequest = new StreamingBuildRequest(streamingConfig.getName(), gap.getFirst(), gap.getSecond());
+            clusterAdmin.addStreamingJob(streamingBuildRequest);
+        }
+    }
 }

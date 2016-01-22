@@ -72,7 +72,8 @@ public class KylinAuthenticationProvider implements AuthenticationProvider {
             }
 
             logger.debug("Authenticated user " + authed.toString());
-            
+
+            SecurityContextHolder.getContext().setAuthentication(authed);
             UserDetails user;
             
             if (authed.getDetails() == null) {

@@ -33,8 +33,10 @@ import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.restclient.Broadcaster;
 import org.apache.kylin.common.util.StringUtil;
 import org.apache.kylin.rest.constant.Constant;
+import org.apache.kylin.rest.request.StreamingBuildRequest;
 import org.apache.kylin.storage.hbase.HBaseConnection;
 import org.apache.kylin.storage.hbase.util.ZookeeperJobLock;
+import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -126,14 +128,13 @@ public class HelixClusterAdmin {
 
     }
 
-    public void addStreamingJob(String streamingName, long start, long end) {
-        String resourceName = RESOURCE_STREAME_CUBE_PREFIX + streamingName + "_" + start + "_" + end;
-        if (!admin.getResourcesInCluster(clusterName).contains(resourceName)) {
-            admin.addResource(clusterName, resourceName, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.SEMI_AUTO.name());
-        } else {
-            logger.warn("Resource '" + resourceName + "' already exists in cluster, skip adding.");
+    public void addStreamingJob(StreamingBuildRequest streamingBuildRequest) {
+        String resourceName = streamingBuildRequest.toResourceName();
+        if (admin.getResourcesInCluster(clusterName).contains(resourceName)) {
+            logger.warn("Resource '" + resourceName + "' already exists in cluster, remove and re-add.");
+            admin.dropResource(clusterName, resourceName);
         }
-
+        admin.addResource(clusterName, resourceName, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.SEMI_AUTO.name());
         admin.rebalance(clusterName, resourceName, 2, "", TAG_STREAM_BUILDER);
 
     }
@@ -150,7 +151,7 @@ public class HelixClusterAdmin {
      */
     protected void startInstance(String instanceName) throws Exception {
         participantManager = HelixManagerFactory.getZKHelixManager(clusterName, instanceName, InstanceType.PARTICIPANT, zkAddress);
-        participantManager.getStateMachineEngine().registerStateModelFactory(StateModelDefId.from(MODEL_LEADER_STANDBY), new LeaderStandbyStateModelFactory());
+        participantManager.getStateMachineEngine().registerStateModelFactory(StateModelDefId.from(MODEL_LEADER_STANDBY), new LeaderStandbyStateModelFactory(this.kylinConfig));
         participantManager.connect();
         participantManager.addLiveInstanceChangeListener(new KylinClusterLiveInstanceChangeListener());
 
@@ -179,10 +180,12 @@ public class HelixClusterAdmin {
     public void stop() {
         if (participantManager != null) {
             participantManager.disconnect();
+            participantManager = null;
         }
 
         if (controllerManager != null) {
             controllerManager.disconnect();
+            controllerManager = null;
         }
     }
 
@@ -269,11 +272,13 @@ public class HelixClusterAdmin {
                 int indexOfUnderscore = instanceName.lastIndexOf("_");
                 instanceRestAddresses.add(instanceName.substring(0, indexOfUnderscore) + ":" + instanceName.substring(indexOfUnderscore + 1));
             }
-            String restServersInCluster = StringUtil.join(instanceRestAddresses, ",");
-            kylinConfig.setProperty("kylin.rest.servers", restServersInCluster);
-            System.setProperty("kylin.rest.servers", restServersInCluster);
-            logger.info("kylin.rest.servers update to " + restServersInCluster);
-            Broadcaster.clearCache();
+            if (instanceRestAddresses.size() > 0) {
+                String restServersInCluster = StringUtil.join(instanceRestAddresses, ",");
+                kylinConfig.setProperty("kylin.rest.servers", restServersInCluster);
+                System.setProperty("kylin.rest.servers", restServersInCluster);
+                logger.info("kylin.rest.servers update to " + restServersInCluster);
+                Broadcaster.clearCache();
+            }
         }
     }
 }

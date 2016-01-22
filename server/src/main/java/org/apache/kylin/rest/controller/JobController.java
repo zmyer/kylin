@@ -61,42 +61,9 @@ public class JobController extends BasicController implements InitializingBean {
      */
     @Override
     public void afterPropertiesSet() throws Exception {
-
         String timeZone = jobService.getConfig().getTimeZone();
         TimeZone tzone = TimeZone.getTimeZone(timeZone);
         TimeZone.setDefault(tzone);
-
-        final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
-
-        if (kylinConfig.isClusterEnabled() == true) {
-            logger.info("Kylin cluster enabled, will use Helix/zookeeper to coordinate.");
-            final HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(kylinConfig);
-            clusterAdmin.start();
-
-            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    clusterAdmin.stop();
-                }
-            }));
-        } else {
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        DefaultScheduler scheduler = DefaultScheduler.createInstance();
-                        scheduler.init(new JobEngineConfig(kylinConfig), new ZookeeperJobLock());
-                        if (!scheduler.hasStarted()) {
-                            logger.error("scheduler has not been started");
-                            System.exit(1);
-                        }
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            }).start();
-        }
-
     }
 
     /**

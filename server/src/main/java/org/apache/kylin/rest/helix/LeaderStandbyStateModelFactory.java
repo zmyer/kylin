@@ -1,146 +1,35 @@
 package org.apache.kylin.rest.helix;
 
-import com.google.common.base.Preconditions;
-import org.apache.helix.NotificationContext;
 import org.apache.helix.api.StateTransitionHandlerFactory;
 import org.apache.helix.api.TransitionHandler;
 import org.apache.helix.api.id.PartitionId;
 import org.apache.helix.api.id.ResourceId;
-import org.apache.helix.model.Message;
-import org.apache.helix.participant.statemachine.Transition;
 import org.apache.kylin.common.KylinConfig;
-import org.apache.kylin.common.KylinConfigBase;
-import org.apache.kylin.cube.CubeInstance;
-import org.apache.kylin.cube.CubeManager;
-import org.apache.kylin.cube.CubeSegment;
-import org.apache.kylin.engine.streaming.StreamingManager;
-import org.apache.kylin.job.engine.JobEngineConfig;
-import org.apache.kylin.job.impl.threadpool.DefaultScheduler;
-import org.apache.kylin.job.lock.MockJobLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
 
 import static org.apache.kylin.rest.helix.HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX;
 
 /**
  */
 public class LeaderStandbyStateModelFactory extends StateTransitionHandlerFactory<TransitionHandler> {
-    private static final Logger logger = LoggerFactory.getLogger(LeaderStandbyStateModelFactory.class);
+    private final KylinConfig kylinConfig;
+
+    public LeaderStandbyStateModelFactory(KylinConfig kylinConfig) {
+        this.kylinConfig = kylinConfig;
+    }
 
     @Override
     public TransitionHandler createStateTransitionHandler(PartitionId partitionId) {
         if (partitionId.getResourceId().equals(ResourceId.from(HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE))) {
-            return JobEngineStateModel.INSTANCE;
+            return JobEngineTransitionHandler.getInstance(kylinConfig);
         }
 
         if (partitionId.getResourceId().stringify().startsWith(RESOURCE_STREAME_CUBE_PREFIX)) {
-            return StreamCubeStateModel.INSTANCE;
+            return StreamCubeBuildTransitionHandler.getInstance(kylinConfig);
         }
 
         return null;
     }
 
-    public static class JobEngineStateModel extends TransitionHandler {
-
-        public static JobEngineStateModel INSTANCE = new JobEngineStateModel();
-
-        @Transition(to = "LEADER", from = "STANDBY")
-        public void onBecomeLeaderFromStandby(Message message, NotificationContext context) {
-            logger.info("JobEngineStateModel.onBecomeLeaderFromStandby()");
-            try {
-                final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
-                DefaultScheduler scheduler = DefaultScheduler.createInstance();
-                scheduler.init(new JobEngineConfig(kylinConfig), new MockJobLock());
-                while (!scheduler.hasStarted()) {
-                    logger.error("scheduler has not been started");
-                    Thread.sleep(1000);
-                }
-            } catch (Exception e) {
-                logger.error("error start DefaultScheduler", e);
-                throw new RuntimeException(e);
-            }
-        }
-
-        @Transition(to = "STANDBY", from = "LEADER")
-        public void onBecomeStandbyFromLeader(Message message, NotificationContext context) {
-            logger.info("JobEngineStateModel.onBecomeStandbyFromLeader()");
-            DefaultScheduler.destroyInstance();
-
-        }
-
-        @Transition(to = "STANDBY", from = "OFFLINE")
-        public void onBecomeStandbyFromOffline(Message message, NotificationContext context) {
-            logger.info("JobEngineStateModel.onBecomeStandbyFromOffline()");
-
-        }
-
-        @Transition(to = "OFFLINE", from = "STANDBY")
-        public void onBecomeOfflineFromStandby(Message message, NotificationContext context) {
-            logger.info("JobEngineStateModel.onBecomeOfflineFromStandby()");
-
-        }
-    }
-
-    public static class StreamCubeStateModel extends TransitionHandler {
-
-        public static StreamCubeStateModel INSTANCE = new StreamCubeStateModel();
-
-        @Transition(to = "LEADER", from = "STANDBY")
-        public void onBecomeLeaderFromStandby(Message message, NotificationContext context) {
-            String resourceName = message.getResourceId().stringify();
-            Preconditions.checkArgument(resourceName.startsWith(RESOURCE_STREAME_CUBE_PREFIX));
-            long end = Long.parseLong(resourceName.substring(resourceName.lastIndexOf("_") + 1));
-            String temp = resourceName.substring(RESOURCE_STREAME_CUBE_PREFIX.length(), resourceName.lastIndexOf("_"));
-            long start = Long.parseLong(temp.substring(temp.lastIndexOf("_") + 1));
-            String streamingConfig = temp.substring(0, temp.lastIndexOf("_"));
-
-            final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
-            
-            final String cubeName = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamingConfig).getCubeName();
-            final CubeInstance cube = CubeManager.getInstance(kylinConfig).getCube(cubeName);
-            for (CubeSegment segment : cube.getSegments()) {
-                if (segment.getDateRangeStart() <= start && segment.getDateRangeEnd() >= end) {
-                    logger.info("Segment " + segment.getName() + " already exist, no need rebuild.");
-                    return;
-                }
-            }
-            
-            KylinConfigBase.getKylinHome();
-            String segmentId = start + "_" + end;
-            String cmd = KylinConfigBase.getKylinHome() + "/bin/kylin.sh streaming start " + streamingConfig + " " + segmentId + " -oneoff true -start " + start + " -end " + end + " -streaming " + streamingConfig;
-            logger.info("Executing: " + cmd);
-            try {
-                String line;
-                Process p = Runtime.getRuntime().exec(cmd);
-                BufferedReader input = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                while ((line = input.readLine()) != null) {
-                    logger.info(line);
-                }
-                input.close();
-            } catch (IOException err) {
-                logger.error("Error happens during build streaming  '" + resourceName + "'", err);
-                throw new RuntimeException(err);
-            }
-
-        }
-
-        @Transition(to = "STANDBY", from = "LEADER")
-        public void onBecomeStandbyFromLeader(Message message, NotificationContext context) {
-
-        }
-
-        @Transition(to = "STANDBY", from = "OFFLINE")
-        public void onBecomeStandbyFromOffline(Message message, NotificationContext context) {
-
-        }
-
-        @Transition(to = "OFFLINE", from = "STANDBY")
-        public void onBecomeOfflineFromStandby(Message message, NotificationContext context) {
-
-        }
-    }
 }

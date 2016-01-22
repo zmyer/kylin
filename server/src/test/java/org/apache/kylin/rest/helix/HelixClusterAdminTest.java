@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.FileUtil;
 import org.apache.helix.manager.zk.ZKHelixAdmin;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
+import org.apache.kylin.rest.service.TestBaseWithZookeeper;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,10 +40,7 @@ import static org.junit.Assert.assertTrue;
 
 /**
 */
-public class HelixClusterAdminTest extends LocalFileMetadataTestCase {
-
-    String zkAddress = "localhost:2199";
-    ZkServer server;
+public class HelixClusterAdminTest extends TestBaseWithZookeeper {
 
     HelixClusterAdmin clusterAdmin1;
     HelixClusterAdmin clusterAdmin2;
@@ -52,21 +50,8 @@ public class HelixClusterAdminTest extends LocalFileMetadataTestCase {
 
     @Before
     public void setup() throws Exception {
-        createTestMetadata();
-        // start zookeeper on localhost
-        final File tmpDir = File.createTempFile("HelixClusterAdminTest", null); 
-        FileUtil.fullyDelete(tmpDir);
-        tmpDir.mkdirs();
-        server = new ZkServer(tmpDir.getAbsolutePath() + "/dataDir", tmpDir.getAbsolutePath() + "/logDir", new IDefaultNameSpace() {
-            @Override
-            public void createDefaultNameSpace(ZkClient zkClient) {
-            }
-        }, 2199);
-        server.start();
-
         kylinConfig = this.getTestConfig();
         kylinConfig.setRestAddress("localhost:7070");
-        kylinConfig.setZookeeperAddress(zkAddress);
         kylinConfig.setClusterName(CLUSTER_NAME);
         
         final ZKHelixAdmin zkHelixAdmin = new ZKHelixAdmin(zkAddress);
@@ -105,7 +90,7 @@ public class HelixClusterAdminTest extends LocalFileMetadataTestCase {
         
         // 3. shutdown the first instance
         clusterAdmin1.stop();
-        clusterAdmin1 = null;
+//        clusterAdmin1 = null;
         Thread.sleep(1000);
         assertTrue(clusterAdmin2.isLeaderRole(RESOURCE_NAME_JOB_ENGINE));
         assertEquals(1, kylinConfig.getRestServers().length);
@@ -133,7 +118,6 @@ public class HelixClusterAdminTest extends LocalFileMetadataTestCase {
             clusterAdmin2.stop();
         }
         
-        server.shutdown();
         cleanupTestMetadata();
     }
 

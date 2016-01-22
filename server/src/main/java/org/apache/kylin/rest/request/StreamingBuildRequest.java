@@ -18,14 +18,27 @@
 
 package org.apache.kylin.rest.request;
 
+import com.google.common.base.Preconditions;
+import org.apache.kylin.rest.helix.HelixClusterAdmin;
+
+import static org.apache.kylin.rest.helix.HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX;
+
 public class StreamingBuildRequest {
 
     private String streaming;
     private long start;
     private long end;
-    private boolean fillGap;
     private String message;
     private boolean successful;
+
+    public StreamingBuildRequest() {
+    }
+
+    public StreamingBuildRequest(String streaming, long start, long end) {
+        this.streaming = streaming;
+        this.start = start;
+        this.end = end;
+    }
 
     public String getStreaming() {
         return streaming;
@@ -67,11 +80,17 @@ public class StreamingBuildRequest {
         this.end = end;
     }
 
-    public boolean isFillGap() {
-        return fillGap;
+    public String toResourceName() {
+        return HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX + streaming + "_" + start + "_" + end;
     }
 
-    public void setFillGap(boolean fillGap) {
-        this.fillGap = fillGap;
+    public static StreamingBuildRequest fromResourceName(String resourceName) {
+        Preconditions.checkArgument(resourceName.startsWith(RESOURCE_STREAME_CUBE_PREFIX));
+        long end = Long.parseLong(resourceName.substring(resourceName.lastIndexOf("_") + 1));
+        String temp = resourceName.substring(RESOURCE_STREAME_CUBE_PREFIX.length(), resourceName.lastIndexOf("_"));
+        long start = Long.parseLong(temp.substring(temp.lastIndexOf("_") + 1));
+        String streamingConfig = temp.substring(0, temp.lastIndexOf("_"));
+
+        return new StreamingBuildRequest(streamingConfig, start, end);
     }
 }

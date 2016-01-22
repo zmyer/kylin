@@ -75,7 +75,7 @@ then
 
     if [ -z "$KYLIN_REST_ADDRESS" ]
     then
-        kylin_rest_address=`hostname`":"`grep "<Connector port=" ${tomcat_root}/conf/server.xml |grep protocol=\"HTTP/1.1\" | cut -d '=' -f 2 | cut -d \" -f 2`
+        kylin_rest_address=`hostname -f`":"`grep "<Connector port=" ${tomcat_root}/conf/server.xml |grep protocol=\"HTTP/1.1\" | cut -d '=' -f 2 | cut -d \" -f 2`
         echo "KYLIN_REST_ADDRESS not found, will use ${kylin_rest_address}"
     else
         echo "KYLIN_REST_ADDRESS is set to: $KYLIN_REST_ADDRESS"
@@ -159,12 +159,12 @@ then
         exit 0
     elif [ "$2" == "stop" ]
     then
-        if [ ! -f "${KYLIN_HOME}/$3_$4" ]
+        if [ ! -f "${KYLIN_HOME}/logs/$3_$4" ]
             then
                 echo "streaming is not running, please check"
                 exit 1
             fi
-            pid=`cat ${KYLIN_HOME}/$3_$4`
+            pid=`cat ${KYLIN_HOME}/logs/$3_$4`
             if [ "$pid" = "" ]
             then
                 echo "streaming is not running, please check"
@@ -173,7 +173,7 @@ then
                 echo "stopping streaming:$pid"
                 kill $pid
             fi
-            rm ${KYLIN_HOME}/$3_$4
+            rm ${KYLIN_HOME}/logs/$3_$4
             exit 0
         else
             echo
