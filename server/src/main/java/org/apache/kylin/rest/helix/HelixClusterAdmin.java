@@ -40,8 +40,10 @@ import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 
@@ -101,7 +103,7 @@ public class HelixClusterAdmin {
         addInstance(instanceName, instanceTags);
         startInstance(instanceName);
 
-        rebalanceWithTag(instanceTags);
+        rebalanceWithTag(RESOURCE_NAME_JOB_ENGINE, TAG_JOB_ENGINE);
 
         boolean startController = kylinConfig.isClusterController();
         if (startController) {
@@ -123,7 +125,7 @@ public class HelixClusterAdmin {
 
         // add job engine as a resource, 1 partition
         if (!admin.getResourcesInCluster(clusterName).contains(HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE)) {
-            admin.addResource(clusterName, HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.SEMI_AUTO.name());
+            admin.addResource(clusterName, HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.FULL_AUTO.name());
         }
 
     }
@@ -134,8 +136,8 @@ public class HelixClusterAdmin {
             logger.warn("Resource '" + resourceName + "' already exists in cluster, remove and re-add.");
             admin.dropResource(clusterName, resourceName);
         }
-        admin.addResource(clusterName, resourceName, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.SEMI_AUTO.name());
-        admin.rebalance(clusterName, resourceName, 2, "", TAG_STREAM_BUILDER);
+        admin.addResource(clusterName, resourceName, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.FULL_AUTO.name());
+        rebalanceWithTag(resourceName, TAG_STREAM_BUILDER);
 
     }
 
@@ -161,13 +163,9 @@ public class HelixClusterAdmin {
      * Rebalance the resource with the tags
      * @param tags
      */
-    protected void rebalanceWithTag(List<String> tags) {
-        for (String tag : tags) {
-            if (tag.equals(TAG_JOB_ENGINE)) {
-                List<String> instances = admin.getInstancesInClusterWithTag(clusterName, TAG_JOB_ENGINE);
-                admin.rebalance(clusterName, RESOURCE_NAME_JOB_ENGINE, instances.size(), "", tag);
-            }
-        }
+    protected void rebalanceWithTag(String resourceName, String tag) {
+        List<String> instances = admin.getInstancesInClusterWithTag(clusterName, tag);
+        admin.rebalance(clusterName, resourceName, instances.size(), "", tag);
     }
 
     /**
@@ -277,6 +275,13 @@ public class HelixClusterAdmin {
                 kylinConfig.setProperty("kylin.rest.servers", restServersInCluster);
                 System.setProperty("kylin.rest.servers", restServersInCluster);
                 logger.info("kylin.rest.servers update to " + restServersInCluster);
+                Properties properties = new Properties();
+                properties.setProperty("kylin.rest.servers", restServersInCluster);
+                try {
+                    KylinConfig.writeOverrideProperties(properties);
+                } catch (IOException e) {
+                    logger.error(e.getMessage(), e);
+                }
                 Broadcaster.clearCache();
             }
         }
