@@ -18,6 +18,8 @@
 
 package org.apache.kylin.rest.service;
 
+import com.google.common.collect.Lists;
+import org.apache.commons.lang.StringUtils;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.cube.CubeInstance;
@@ -98,20 +100,33 @@ public class StreamingService extends BasicService {
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'OPERATION') or hasPermission(#cube, 'MANAGEMENT')")
-    public void buildStream(CubeInstance cube, StreamingBuildRequest streamingBuildRequest) {
+    public void buildStream(CubeInstance cube, StreamingBuildRequest streamingBuildRequest) throws IOException {
         HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(KylinConfig.getInstanceFromEnv());
-        clusterAdmin.addStreamingJob(streamingBuildRequest);
+        try {
+            clusterAdmin.addStreamingJob(streamingBuildRequest);
+        } catch (IOException e) {
+            logger.error("", e);
+            streamingBuildRequest.setSuccessful(false);
+            streamingBuildRequest.setMessage("Failed to submit job for " + streamingBuildRequest.getStreaming());
+        }
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'OPERATION') or hasPermission(#cube, 'MANAGEMENT')")
-    public void fillGap(CubeInstance cube) {
+    public List<Pair<Long, Long>> fillGap(CubeInstance cube) throws IOException {
         HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(KylinConfig.getInstanceFromEnv());
         final StreamingConfig streamingConfig = StreamingManager.getInstance(KylinConfig.getInstanceFromEnv()).getStreamingConfigByCube(cube.getName());
-        final List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(streamingConfig.getCubeName());
-        logger.info("all gaps:" + org.apache.commons.lang3.StringUtils.join(gaps, ","));
-        for (Pair<Long, Long> gap : gaps) {
+        final List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(streamingConfig.getCubeName(), streamingConfig.getMaxGap());
+        logger.info("all gaps:" + StringUtils.join(gaps, ","));
+
+        List<Pair<Long, Long>> filledGap = Lists.newArrayList();
+        int max_gaps_at_one_time = streamingConfig.getMaxGapNumber();
+        for (int i = 0; i < Math.min(gaps.size(), max_gaps_at_one_time); i++) {
+            Pair<Long, Long> gap = gaps.get(i);
             StreamingBuildRequest streamingBuildRequest = new StreamingBuildRequest(streamingConfig.getName(), gap.getFirst(), gap.getSecond());
             clusterAdmin.addStreamingJob(streamingBuildRequest);
+            filledGap.add(gap);
         }
+
+        return filledGap;
     }
 }

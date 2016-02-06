@@ -549,6 +549,10 @@ public class KylinConfigBase implements Serializable {
     public String getClusterName() {
         return this.getOptional("kylin.cluster.name", getMetadataUrlPrefix());
     }
+    
+    public int getClusterMaxPartitionPerRegion() {
+        return Integer.parseInt(getOptional("kylin.cluster.max.partition.per.resource", "100"));
+    }
 
     public void setClusterName(String clusterName) {
         setProperty("kylin.cluster.name", clusterName);

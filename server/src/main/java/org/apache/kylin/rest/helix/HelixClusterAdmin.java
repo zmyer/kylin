@@ -18,11 +18,9 @@
 package org.apache.kylin.rest.helix;
 
 import com.google.common.base.Preconditions;
-import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.helix.*;
 import org.apache.helix.api.id.StateModelDefId;
 import org.apache.helix.controller.HelixControllerMain;
@@ -32,11 +30,11 @@ import org.apache.helix.tools.StateModelConfigGenerator;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.restclient.Broadcaster;
 import org.apache.kylin.common.util.StringUtil;
+import org.apache.kylin.engine.streaming.StreamingConfig;
+import org.apache.kylin.engine.streaming.StreamingManager;
 import org.apache.kylin.rest.constant.Constant;
 import org.apache.kylin.rest.request.StreamingBuildRequest;
 import org.apache.kylin.storage.hbase.HBaseConnection;
-import org.apache.kylin.storage.hbase.util.ZookeeperJobLock;
-import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -68,7 +66,7 @@ public class HelixClusterAdmin {
 
     private static final Logger logger = LoggerFactory.getLogger(HelixClusterAdmin.class);
     private final String zkAddress;
-    private final ZKHelixAdmin admin;
+    private final HelixAdmin admin;
     private final String clusterName;
 
     private HelixClusterAdmin(KylinConfig kylinConfig) {
@@ -80,7 +78,7 @@ public class HelixClusterAdmin {
             zkAddress = HBaseConnection.getZKConnectString();
             logger.info("no 'kylin.zookeeper.address' in kylin.properties, use HBase zookeeper " + zkAddress);
         }
-        
+
         this.clusterName = kylinConfig.getClusterName();
         this.admin = new ZKHelixAdmin(zkAddress);
     }
@@ -130,24 +128,59 @@ public class HelixClusterAdmin {
 
     }
 
-    public void addStreamingJob(StreamingBuildRequest streamingBuildRequest) {
+    public void addStreamingJob(StreamingBuildRequest streamingBuildRequest) throws IOException {
         String resourceName = streamingBuildRequest.toResourceName();
-        if (admin.getResourcesInCluster(clusterName).contains(resourceName)) {
-            logger.warn("Resource '" + resourceName + "' already exists in cluster, remove and re-add.");
-            admin.dropResource(clusterName, resourceName);
+        if (!admin.getResourcesInCluster(clusterName).contains(resourceName)) {
+            logger.info("Resource '" + resourceName + "' is new, add it with 0 partitions in cluster.");
+            admin.addResource(clusterName, resourceName, 0, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.FULL_AUTO.name());
         }
-        admin.addResource(clusterName, resourceName, 1, MODEL_LEADER_STANDBY, IdealState.RebalanceMode.FULL_AUTO.name());
-        rebalanceWithTag(resourceName, TAG_STREAM_BUILDER);
 
+        IdealState idealState = admin.getResourceIdealState(clusterName, resourceName);
+
+        StreamingConfig streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamingBuildRequest.getStreaming());
+        List<String> partitions = streamingConfig.getPartitions();
+        if (partitions == null) {
+            partitions = Lists.newArrayList();
+        }
+
+        if (partitions.size() != idealState.getNumPartitions() || idealState.getNumPartitions() >= kylinConfig.getClusterMaxPartitionPerRegion()) {
+            if (partitions.size() != idealState.getNumPartitions()) {
+                logger.error("Cluster resource partition number doesn't match with the partitions in StreamingConfig: " + resourceName);
+            } else {
+                logger.error("Partitions number for resource '" + resourceName + " exceeds the up limit: " + kylinConfig.getClusterMaxPartitionPerRegion());
+            }
+            logger.info("Drop and create resource: " + resourceName);
+            cleanResourcePartitions(resourceName);
+            idealState = admin.getResourceIdealState(clusterName, resourceName);
+            streamingConfig.getPartitions().clear();
+            StreamingManager.getInstance(kylinConfig).updateStreamingConfig(streamingConfig);
+            streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamingBuildRequest.getStreaming());
+            partitions = Lists.newArrayList();
+        }
+
+        partitions.add(streamingBuildRequest.toPartitionName());
+        streamingConfig.setPartitions(partitions);
+        StreamingManager.getInstance(kylinConfig).updateStreamingConfig(streamingConfig);
+
+        idealState.setNumPartitions(idealState.getNumPartitions() + 1);
+        admin.setResourceIdealState(clusterName, resourceName, idealState);
+        rebalanceWithTag(resourceName, TAG_STREAM_BUILDER);
     }
 
-    public void dropStreamingJob(String streamingName, long start, long end) {
-        String resourceName = RESOURCE_STREAME_CUBE_PREFIX + streamingName + "_" + start + "_" + end;
-        admin.dropResource(clusterName, resourceName);
+
+    private void cleanResourcePartitions(String resourceName) {
+        IdealState is = admin.getResourceIdealState(clusterName, resourceName);
+        is.getRecord().getListFields().clear();
+        is.getRecord().getMapFields().clear();
+        is.setNumPartitions(0);
+        admin.setResourceIdealState(clusterName, resourceName, is);
+
+        logger.info("clean all partitions in resource: " + resourceName);
     }
 
     /**
      * Start the instance and register the state model factory
+     *
      * @param instanceName
      * @throws Exception
      */
@@ -161,11 +194,11 @@ public class HelixClusterAdmin {
 
     /**
      * Rebalance the resource with the tags
+     *
      * @param tags
      */
     protected void rebalanceWithTag(String resourceName, String tag) {
-        List<String> instances = admin.getInstancesInClusterWithTag(clusterName, tag);
-        admin.rebalance(clusterName, resourceName, instances.size(), "", tag);
+        admin.rebalance(clusterName, resourceName, 2, null, tag);
     }
 
     /**
@@ -206,6 +239,7 @@ public class HelixClusterAdmin {
 
     /**
      * Check whether current kylin instance is in the leader role
+     *
      * @return
      */
     public boolean isLeaderRole(String resourceName) {
@@ -220,6 +254,7 @@ public class HelixClusterAdmin {
 
     /**
      * Add instance to cluster, with a tag list
+     *
      * @param instanceName should be unique in format: hostName_port
      * @param tags
      */

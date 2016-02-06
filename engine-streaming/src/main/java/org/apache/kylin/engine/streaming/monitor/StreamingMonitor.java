@@ -74,7 +74,7 @@ public class StreamingMonitor {
         sendMail(receivers, title, stringBuilder.toString());
     }
 
-    public static final List<Pair<Long, Long>> findGaps(String cubeName) {
+    public static final List<Pair<Long, Long>> findGaps(String cubeName, long maxGapAtOnce) {
         List<CubeSegment> segments = getSortedReadySegments(cubeName);
         List<Pair<Long, Long>> gaps = Lists.newArrayList();
         for (int i = 0; i < segments.size() - 1; ++i) {
@@ -83,7 +83,12 @@ public class StreamingMonitor {
             if (first.getDateRangeEnd() == second.getDateRangeStart()) {
                 continue;
             } else if (first.getDateRangeEnd() < second.getDateRangeStart()) {
-                gaps.add(Pair.newPair(first.getDateRangeEnd(), second.getDateRangeStart()));
+                long start = first.getDateRangeEnd();
+                while (start < second.getDateRangeStart()) {
+                    long end = Math.min(start + maxGapAtOnce, second.getDateRangeStart());
+                    gaps.add(Pair.newPair(start, end));
+                    start = end;
+                }
             }
         }
         return gaps;
@@ -119,7 +124,7 @@ public class StreamingMonitor {
             logger.info("cube:" + cubeName + " does not exist");
             return;
         }
-        List<Pair<Long, Long>> gaps = findGaps(cubeName);
+        List<Pair<Long, Long>> gaps = findGaps(cubeName, Long.MAX_VALUE);
         List<Pair<String, String>> overlaps = Lists.newArrayList();
         StringBuilder content = new StringBuilder();
         if (!gaps.isEmpty()) {

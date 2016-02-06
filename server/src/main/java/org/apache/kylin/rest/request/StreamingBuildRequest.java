@@ -81,16 +81,9 @@ public class StreamingBuildRequest {
     }
 
     public String toResourceName() {
-        return HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX + streaming + "_" + start + "_" + end;
+        return HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX + streaming;
     }
-
-    public static StreamingBuildRequest fromResourceName(String resourceName) {
-        Preconditions.checkArgument(resourceName.startsWith(RESOURCE_STREAME_CUBE_PREFIX));
-        long end = Long.parseLong(resourceName.substring(resourceName.lastIndexOf("_") + 1));
-        String temp = resourceName.substring(RESOURCE_STREAME_CUBE_PREFIX.length(), resourceName.lastIndexOf("_"));
-        long start = Long.parseLong(temp.substring(temp.lastIndexOf("_") + 1));
-        String streamingConfig = temp.substring(0, temp.lastIndexOf("_"));
-
-        return new StreamingBuildRequest(streamingConfig, start, end);
+    public String toPartitionName() {
+        return start + "_" + end;
     }
 }

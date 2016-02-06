@@ -24,9 +24,11 @@ import com.fasterxml.jackson.databind.JsonMappingException;
 import com.google.common.base.Preconditions;
 import org.apache.commons.lang.StringUtils;
 import org.apache.kylin.common.util.JsonUtil;
+import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.engine.streaming.StreamingConfig;
+import org.apache.kylin.engine.streaming.monitor.StreamingMonitor;
 import org.apache.kylin.rest.exception.BadRequestException;
 import org.apache.kylin.rest.exception.ForbiddenException;
 import org.apache.kylin.rest.exception.InternalErrorException;
@@ -249,7 +251,12 @@ public class StreamingController extends BasicController {
         }
 
         streamingBuildRequest.setStreaming(streamingConfig.getName());
-        streamingService.buildStream(cube, streamingBuildRequest);
+        try {
+            streamingService.buildStream(cube, streamingBuildRequest);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return streamingBuildRequest;
+        }
         streamingBuildRequest.setMessage("Build request is submitted successfully.");
         streamingBuildRequest.setSuccessful(true);
         return streamingBuildRequest;
@@ -274,12 +281,51 @@ public class StreamingController extends BasicController {
 
         StreamingBuildRequest streamingBuildRequest = new StreamingBuildRequest();
         streamingBuildRequest.setStreaming(streamingConfig.getName());
-        streamingService.fillGap(cube);
-        streamingBuildRequest.setMessage("FillGap request is submitted successfully.");
+        List<Pair<Long, Long>> gaps = null;
+        try {
+            gaps = streamingService.fillGap(cube);
+        } catch (IOException e) {
+            logger.error("", e);
+            return streamingBuildRequest;
+        }
+        streamingBuildRequest.setMessage("FillGap request is submitted successfully, gap number: " + gaps.size());
         streamingBuildRequest.setSuccessful(true);
         return streamingBuildRequest;
 
     }
+
+    /**
+     * check wheter gap exists in a cube
+     *
+     * @param cubeName Cube Name
+     * @return
+     * @throws IOException
+     */
+    @RequestMapping(value = "/{cubeName}/checkgap", method = { RequestMethod.PUT })
+    @ResponseBody
+    public StreamingBuildRequest checkGap(@PathVariable String cubeName) {
+        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCube(cubeName);
+        Preconditions.checkNotNull(streamingConfig, "Stream config for '" + cubeName + "' is not found.");
+        List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
+        Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
+        CubeInstance cube = cubes.get(0);
+
+        List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(streamingConfig.getCubeName(), streamingConfig.getMaxGap());
+        logger.info("all gaps:" + StringUtils.join(gaps, ","));
+        
+        StreamingBuildRequest streamingBuildRequest = new StreamingBuildRequest();
+        streamingBuildRequest.setStreaming(streamingConfig.getName());
+        if (gaps.size() > 0) {
+            streamingBuildRequest.setMessage(gaps.size() + " gaps in cube: " + StringUtils.join(gaps, ","));
+        } else {
+            streamingBuildRequest.setMessage("No gap.");
+        }
+        streamingBuildRequest.setSuccessful(true);
+        return streamingBuildRequest;
+
+    }
+
+    
 
     public void setStreamingService(StreamingService streamingService) {
         this.streamingService = streamingService;

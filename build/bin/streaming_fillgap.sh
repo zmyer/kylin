@@ -25,5 +25,4 @@ AUTHORIZATION=$2
 KYLIN_HOST=$3
 
 cd ${KYLIN_HOME}
-#sh ${KYLIN_HOME}/bin/kylin.sh streaming start ${streaming} fillgap -streaming ${streaming} -fillGap true -margin ${margin}
 curl --request PUT --header "Authorization: Basic $AUTHORIZATION" --header "Content-Type: application/json" -v ${KYLIN_HOST}/kylin/api/streaming/${CUBE_NAME}/fillgap
