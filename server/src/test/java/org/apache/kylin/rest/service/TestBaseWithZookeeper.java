@@ -25,9 +25,6 @@ import org.apache.hadoop.fs.FileUtil;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
-import org.springframework.security.authentication.TestingAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.io.File;
 
@@ -35,7 +32,7 @@ import java.io.File;
  */
 public class TestBaseWithZookeeper extends LocalFileMetadataTestCase {
     protected static final String zkAddress = "localhost:2199";
-    static ZkServer server;
+    static ZkServer server = null;
     static boolean zkStarted = false;
 
     @BeforeClass
@@ -57,13 +54,13 @@ public class TestBaseWithZookeeper extends LocalFileMetadataTestCase {
             zkStarted = true;
             System.setProperty("kylin.zookeeper.address", zkAddress);
         }
-
     }
 
     @AfterClass
     public static void tearDownResource() {
-        if (server == null) {
+        if (server != null) {
             server.shutdown();
+            server = null;
             zkStarted = false;
             System.setProperty("kylin.zookeeper.address", "");
         }

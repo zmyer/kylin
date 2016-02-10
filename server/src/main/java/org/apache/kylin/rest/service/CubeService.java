@@ -590,10 +590,15 @@ public class CubeService extends BasicService {
     public void updateOnNewSegmentReady(String cubeName) {
         logger.debug("on updateOnNewSegmentReady: " + cubeName);
         final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
-        boolean isLeaderRole = true;
+        boolean isLeaderRole = false;
         if (kylinConfig.isClusterEnabled()) {
-            HelixClusterAdmin jobEngineAdmin = HelixClusterAdmin.getInstance(kylinConfig);
-            isLeaderRole = jobEngineAdmin.isLeaderRole(HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE);
+            HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(kylinConfig);
+            isLeaderRole = clusterAdmin.isLeaderRole(HelixClusterAdmin.RESOURCE_NAME_JOB_ENGINE);
+        } else {
+            String serverMode = kylinConfig.getServerMode();
+            if (Constant.SERVER_MODE_JOB.equals(serverMode.toLowerCase()) || Constant.SERVER_MODE_ALL.equals(serverMode.toLowerCase())) {
+                isLeaderRole = true;
+            }
         }
         logger.debug("server is leader role ? " + isLeaderRole);
         if (isLeaderRole == true) {

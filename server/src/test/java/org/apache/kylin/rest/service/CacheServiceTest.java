@@ -52,8 +52,6 @@
 //
 //    private static Server server;
 //
-//    private static String ZK_ADDRESS = "localhost:2199";
-//
 //    private static KylinConfig configA;
 //    private static KylinConfig configB;
 //

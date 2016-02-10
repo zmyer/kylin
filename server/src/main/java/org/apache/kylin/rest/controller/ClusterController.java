@@ -25,6 +25,7 @@ import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.engine.streaming.StreamingManager;
 import org.apache.kylin.job.engine.JobEngineConfig;
 import org.apache.kylin.job.impl.threadpool.DefaultScheduler;
+import org.apache.kylin.job.lock.JobLock;
 import org.apache.kylin.rest.constant.Constant;
 import org.apache.kylin.rest.helix.HelixClusterAdmin;
 import org.apache.kylin.rest.request.StreamingBuildRequest;
@@ -32,6 +33,7 @@ import org.apache.kylin.storage.hbase.util.ZookeeperJobLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -48,6 +50,8 @@ import java.util.Collection;
 public class ClusterController extends BasicController implements InitializingBean {
     private static final Logger logger = LoggerFactory.getLogger(ClusterController.class);
 
+    @Autowired
+    private JobLock jobLock;
     /*
      * (non-Javadoc)
      * 
@@ -78,7 +82,7 @@ public class ClusterController extends BasicController implements InitializingBe
                     public void run() {
                         try {
                             DefaultScheduler scheduler = DefaultScheduler.createInstance();
-                            scheduler.init(new JobEngineConfig(kylinConfig), new ZookeeperJobLock());
+                            scheduler.init(new JobEngineConfig(kylinConfig), jobLock);
                             if (!scheduler.hasStarted()) {
                                 logger.error("scheduler has not been started");
                                 System.exit(1);

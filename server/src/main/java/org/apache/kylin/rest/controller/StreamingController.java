@@ -253,8 +253,10 @@ public class StreamingController extends BasicController {
         streamingBuildRequest.setStreaming(streamingConfig.getName());
         try {
             streamingService.buildStream(cube, streamingBuildRequest);
-        } catch (IOException e) {
-            e.printStackTrace();
+        } catch (IOException e) {  
+            logger.error("", e);
+            streamingBuildRequest.setSuccessful(false);
+            streamingBuildRequest.setMessage("Failed to submit job for " + streamingBuildRequest.getStreaming() + ", error is: " + e.getMessage());
             return streamingBuildRequest;
         }
         streamingBuildRequest.setMessage("Build request is submitted successfully.");

@@ -101,14 +101,13 @@ public class StreamingService extends BasicService {
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'OPERATION') or hasPermission(#cube, 'MANAGEMENT')")
     public void buildStream(CubeInstance cube, StreamingBuildRequest streamingBuildRequest) throws IOException {
-        HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(KylinConfig.getInstanceFromEnv());
-        try {
-            clusterAdmin.addStreamingJob(streamingBuildRequest);
-        } catch (IOException e) {
-            logger.error("", e);
-            streamingBuildRequest.setSuccessful(false);
-            streamingBuildRequest.setMessage("Failed to submit job for " + streamingBuildRequest.getStreaming());
+        final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
+        if (kylinConfig.isClusterEnabled() == false) {
+            throw new IllegalStateException("Set kylin.cluster.enabled to true to enable streaming feature.");
         }
+        
+        HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(kylinConfig);
+        clusterAdmin.addStreamingJob(streamingBuildRequest);
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'OPERATION') or hasPermission(#cube, 'MANAGEMENT')")

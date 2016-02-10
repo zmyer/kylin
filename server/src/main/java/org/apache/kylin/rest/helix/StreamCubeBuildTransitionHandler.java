@@ -2,6 +2,7 @@ package org.apache.kylin.rest.helix;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
+import org.apache.commons.io.IOUtils;
 import org.apache.helix.NotificationContext;
 import org.apache.helix.api.TransitionHandler;
 import org.apache.helix.model.Message;
@@ -120,17 +121,22 @@ public class StreamCubeBuildTransitionHandler extends TransitionHandler {
 
     private void runCMD(String cmd) {
         logger.info("Executing: " + cmd);
+        BufferedReader input = null;
+        Process p = null;
         try {
             String line;
-            Process p = Runtime.getRuntime().exec(cmd);
-            BufferedReader input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            p = Runtime.getRuntime().exec(cmd);
+            input = new BufferedReader(new InputStreamReader(p.getInputStream()));
             while ((line = input.readLine()) != null) {
                 logger.info(line);
             }
-            input.close();
+
+            logger.info("Successfully start: " + cmd);
         } catch (IOException err) {
             logger.error("Error happens when running '" + cmd + "'", err);
             throw new RuntimeException(err);
+        } finally {
+            IOUtils.closeQuietly(input);
         }
 
     }

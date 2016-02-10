@@ -22,6 +22,7 @@ import org.I0Itec.zkclient.ZkClient;
 import org.I0Itec.zkclient.ZkServer;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.fs.FileUtil;
+import org.apache.helix.HelixAdmin;
 import org.apache.helix.manager.zk.ZKHelixAdmin;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
@@ -44,6 +45,7 @@ public class HelixClusterAdminTest extends TestBaseWithZookeeper {
 
     HelixClusterAdmin clusterAdmin1;
     HelixClusterAdmin clusterAdmin2;
+    HelixAdmin zkHelixAdmin;
     KylinConfig kylinConfig;
 
     private static final String CLUSTER_NAME = "test_cluster";
@@ -54,7 +56,7 @@ public class HelixClusterAdminTest extends TestBaseWithZookeeper {
         kylinConfig.setRestAddress("localhost:7070");
         kylinConfig.setClusterName(CLUSTER_NAME);
         
-        final ZKHelixAdmin zkHelixAdmin = new ZKHelixAdmin(zkAddress);
+        zkHelixAdmin = new ZKHelixAdmin(zkAddress);
         zkHelixAdmin.dropCluster(kylinConfig.getClusterName());
 
     }
@@ -117,6 +119,8 @@ public class HelixClusterAdminTest extends TestBaseWithZookeeper {
         if (clusterAdmin2 != null) {
             clusterAdmin2.stop();
         }
+
+        zkHelixAdmin.dropCluster(CLUSTER_NAME);
         
         cleanupTestMetadata();
     }
