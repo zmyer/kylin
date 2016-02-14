@@ -653,7 +653,7 @@ public class CubeService extends BasicService {
                     cube = getCubeManager().getCube(cubeName);
                     CubeSegment newSeg = getCubeManager().autoMergeCubeSegments(cube);
                     if (newSeg != null) {
-                        newSeg = getCubeManager().mergeSegments(cube, newSeg.getDateRangeStart(), newSeg.getDateRangeEnd(), true);
+                        newSeg = getCubeManager().mergeSegments(cube, newSeg.getDateRangeStart(), newSeg.getDateRangeEnd(), true, false);
                         logger.debug("Will submit merge job on " + newSeg);
                         DefaultChainedExecutable job = EngineFactory.createBatchMergeJob(newSeg, "SYSTEM");
                         getExecutableManager().addJob(job);

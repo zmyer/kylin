@@ -18,13 +18,11 @@
 
 package org.apache.kylin.cube;
 
-import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-
-import javax.annotation.Nullable;
-
+import com.google.common.base.Function;
+import com.google.common.collect.Collections2;
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.persistence.JsonSerializer;
@@ -46,9 +44,7 @@ import org.apache.kylin.metadata.MetadataManager;
 import org.apache.kylin.metadata.model.SegmentStatusEnum;
 import org.apache.kylin.metadata.model.TableDesc;
 import org.apache.kylin.metadata.model.TblColRef;
-import org.apache.kylin.metadata.project.ProjectInstance;
 import org.apache.kylin.metadata.project.ProjectManager;
-import org.apache.kylin.metadata.project.RealizationEntry;
 import org.apache.kylin.metadata.realization.IRealization;
 import org.apache.kylin.metadata.realization.IRealizationConstants;
 import org.apache.kylin.metadata.realization.IRealizationProvider;
@@ -59,11 +55,11 @@ import org.apache.kylin.source.SourceFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Collections2;
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Multimap;
+import javax.annotation.Nullable;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author yangli9
@@ -460,8 +456,14 @@ public class CubeManager implements IRealizationProvider {
     }
 
     public CubeSegment mergeSegments(CubeInstance cube, final long startDate, final long endDate, boolean forceMergeEmptySeg) throws IOException {
-        checkNoBuildingSegment(cube);
+        return mergeSegments(cube, startDate, endDate, forceMergeEmptySeg, true);
+    }
+
+    public CubeSegment mergeSegments(CubeInstance cube, final long startDate, final long endDate, boolean forceMergeEmptySeg, boolean strictCheck) throws IOException {
         checkCubeIsPartitioned(cube);
+        
+        if (strictCheck)
+            checkNoBuildingSegment(cube);
 
         Pair<Long, Long> range = alignMergeRange(cube, startDate, endDate);
         CubeSegment newSegment = newSegment(cube, range.getFirst(), range.getSecond());
@@ -621,13 +623,23 @@ public class CubeManager implements IRealizationProvider {
             return null;
         }
 
-        if (cube.getBuildingSegments().size() > 0) {
-            logger.debug("Cube " + cube.getName() + " has bulding segment, will not trigger merge at this moment");
-            return null;
-        }
-
         List<CubeSegment> readySegments = Lists.newArrayList(cube.getSegments(SegmentStatusEnum.READY));
 
+        if (readySegments.size() == 0) {
+            logger.debug("Cube " + cube.getName() + " has no ready segment to merge");
+            return null;
+        }
+        List<CubeSegment> buildingSegments = Lists.newArrayList(cube.getSegments(SegmentStatusEnum.NEW));
+        List<CubeSegment> toSkipSegments = Lists.newArrayList();
+        for (CubeSegment building : buildingSegments) {
+            for (CubeSegment ready : readySegments) {
+                if (ready.getDateRangeStart() >= building.getDateRangeStart() && ready.getDateRangeEnd() <= building.getDateRangeEnd()) {
+                    toSkipSegments.add(ready);
+                }
+            }
+        }
+
+        readySegments.removeAll(toSkipSegments);
         if (readySegments.size() == 0) {
             logger.debug("Cube " + cube.getName() + " has no ready segment to merge");
             return null;
