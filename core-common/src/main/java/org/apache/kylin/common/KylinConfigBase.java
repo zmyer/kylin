@@ -574,6 +574,10 @@ public class KylinConfigBase implements Serializable {
         setProperty("kylin.rest.address", restAddress);
     }
     
+    public int getJobRetry() {
+        return Integer.parseInt(this.getOptional("kylin.job.retry", "0"));
+    }
+    
     public String toString() {
         return getMetadataUrl();
     }
