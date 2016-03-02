@@ -23,6 +23,7 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.cube.CubeInstance;
+import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.engine.streaming.StreamingConfig;
 import org.apache.kylin.engine.streaming.StreamingManager;
 import org.apache.kylin.engine.streaming.monitor.StreamingMonitor;
@@ -49,26 +50,22 @@ public class StreamingService extends BasicService {
     private AccessService accessService;
 
     @PostFilter(Constant.ACCESS_POST_FILTER_READ)
-    public List<StreamingConfig> listAllStreamingConfigs(final String cubeName) throws IOException {
+    public List<StreamingConfig> listAllStreamingConfigs(final String table) throws IOException {
         List<StreamingConfig> streamingConfigs = new ArrayList();
-        CubeInstance cubeInstance = (null != cubeName) ? getCubeManager().getCube(cubeName) : null;
-        if (null == cubeInstance) {
+        if (StringUtils.isEmpty(table)) {
             streamingConfigs = getStreamingManager().listAllStreaming();
         } else {
-            for (StreamingConfig config : getStreamingManager().listAllStreaming()) {
-                if (cubeInstance.getName().equals(config.getCubeName())) {
-                    streamingConfigs.add(config);
-                }
-            }
+            StreamingConfig config = getStreamingManager().getStreamingConfig(table);
+            streamingConfigs.add(config);
         }
 
         return streamingConfigs;
     }
 
-    public List<StreamingConfig> getStreamingConfigs(final String cubeName, final Integer limit, final Integer offset) throws IOException {
+    public List<StreamingConfig> getStreamingConfigs(final String table, final Integer limit, final Integer offset) throws IOException {
 
         List<StreamingConfig> streamingConfigs;
-        streamingConfigs = listAllStreamingConfigs(cubeName);
+        streamingConfigs = listAllStreamingConfigs(table);
 
         if (limit == null || offset == null) {
             return streamingConfigs;
@@ -113,8 +110,12 @@ public class StreamingService extends BasicService {
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'OPERATION') or hasPermission(#cube, 'MANAGEMENT')")
     public List<Pair<Long, Long>> fillGap(CubeInstance cube) throws IOException {
         HelixClusterAdmin clusterAdmin = HelixClusterAdmin.getInstance(KylinConfig.getInstanceFromEnv());
-        final StreamingConfig streamingConfig = StreamingManager.getInstance(KylinConfig.getInstanceFromEnv()).getStreamingConfigByCube(cube.getName());
-        final List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(streamingConfig.getCubeName(), streamingConfig.getMaxGap());
+        final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
+        final StreamingConfig streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(cube.getFactTable());
+        if (streamingConfig == null) {
+            throw new IllegalArgumentException("Cube '" + cube.getName() + "' is not a streaming cube.");
+        }
+        final List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(cube.getName(), streamingConfig.getMaxGap());
         logger.info("all gaps:" + StringUtils.join(gaps, ","));
 
         List<Pair<Long, Long>> filledGap = Lists.newArrayList();

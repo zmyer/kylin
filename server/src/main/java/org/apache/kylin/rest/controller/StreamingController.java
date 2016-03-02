@@ -70,9 +70,9 @@ public class StreamingController extends BasicController {
 
     @RequestMapping(value = "/getConfig", method = { RequestMethod.GET })
     @ResponseBody
-    public List<StreamingConfig> getStreamings(@RequestParam(value = "cubeName", required = false) String cubeName, @RequestParam(value = "limit", required = false) Integer limit, @RequestParam(value = "offset", required = false) Integer offset) {
+    public List<StreamingConfig> getStreamings(@RequestParam(value = "table", required = false) String table, @RequestParam(value = "limit", required = false) Integer limit, @RequestParam(value = "offset", required = false) Integer offset) {
         try {
-            return streamingService.getStreamingConfigs(cubeName, limit, offset);
+            return streamingService.getStreamingConfigs(table, limit, offset);
         } catch (IOException e) {
             logger.error("Failed to deal with the request:" + e.getLocalizedMessage(), e);
             throw new InternalErrorException("Failed to deal with the request: " + e.getLocalizedMessage());
@@ -166,11 +166,11 @@ public class StreamingController extends BasicController {
 
     @RequestMapping(value = "/{configName}", method = { RequestMethod.DELETE })
     @ResponseBody
-    public void deleteConfig(@PathVariable String configName) throws IOException {
-        StreamingConfig config = streamingService.getStreamingManager().getStreamingConfig(configName);
-        KafkaConfig kafkaConfig = kafkaConfigService.getKafkaConfig(configName);
+    public void deleteConfig(@PathVariable String table) throws IOException {
+        StreamingConfig config = streamingService.getStreamingManager().getStreamingConfig(table);
+        KafkaConfig kafkaConfig = kafkaConfigService.getKafkaConfig(table);
         if (null == config) {
-            throw new NotFoundException("StreamingConfig with name " + configName + " not found..");
+            throw new NotFoundException("StreamingConfig with name " + table + " not found..");
         }
         try {
             streamingService.dropStreamingConfig(config);
@@ -232,7 +232,7 @@ public class StreamingController extends BasicController {
     @RequestMapping(value = "/{cubeName}/build", method = { RequestMethod.PUT })
     @ResponseBody
     public StreamingBuildRequest buildStream(@PathVariable String cubeName, @RequestBody StreamingBuildRequest streamingBuildRequest) {
-        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCube(cubeName);
+        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCubeName(cubeName);
         Preconditions.checkNotNull(streamingConfig, "Stream config for '" + cubeName + "' is not found.");
         List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
         Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
@@ -250,13 +250,13 @@ public class StreamingController extends BasicController {
             }
         }
 
-        streamingBuildRequest.setStreaming(streamingConfig.getName());
+        streamingBuildRequest.setCubeName(cubeName);
         try {
             streamingService.buildStream(cube, streamingBuildRequest);
         } catch (IOException e) {  
             logger.error("", e);
             streamingBuildRequest.setSuccessful(false);
-            streamingBuildRequest.setMessage("Failed to submit job for " + streamingBuildRequest.getStreaming() + ", error is: " + e.getMessage());
+            streamingBuildRequest.setMessage("Failed to submit job for " + streamingBuildRequest.getCubeName() + ", error is: " + e.getMessage());
             return streamingBuildRequest;
         }
         streamingBuildRequest.setMessage("Build request is submitted successfully.");
@@ -275,14 +275,14 @@ public class StreamingController extends BasicController {
     @RequestMapping(value = "/{cubeName}/fillgap", method = { RequestMethod.PUT })
     @ResponseBody
     public StreamingBuildRequest fillGap(@PathVariable String cubeName) {
-        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCube(cubeName);
+        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCubeName(cubeName);
         Preconditions.checkNotNull(streamingConfig, "Stream config for '" + cubeName + "' is not found.");
         List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
         Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
         CubeInstance cube = cubes.get(0);
 
         StreamingBuildRequest streamingBuildRequest = new StreamingBuildRequest();
-        streamingBuildRequest.setStreaming(streamingConfig.getName());
+        streamingBuildRequest.setCubeName(cubeName);
         List<Pair<Long, Long>> gaps = null;
         try {
             gaps = streamingService.fillGap(cube);
@@ -306,17 +306,14 @@ public class StreamingController extends BasicController {
     @RequestMapping(value = "/{cubeName}/checkgap", method = { RequestMethod.PUT })
     @ResponseBody
     public StreamingBuildRequest checkGap(@PathVariable String cubeName) {
-        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCube(cubeName);
+        StreamingConfig streamingConfig = streamingService.getStreamingManager().getStreamingConfigByCubeName(cubeName);
         Preconditions.checkNotNull(streamingConfig, "Stream config for '" + cubeName + "' is not found.");
-        List<CubeInstance> cubes = cubeService.getCubes(cubeName, null, null, null, null);
-        Preconditions.checkArgument(cubes.size() == 1, "Cube '" + cubeName + "' is not found.");
-        CubeInstance cube = cubes.get(0);
 
-        List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(streamingConfig.getCubeName(), streamingConfig.getMaxGap());
+        List<Pair<Long, Long>> gaps = StreamingMonitor.findGaps(cubeName, streamingConfig.getMaxGap());
         logger.info("all gaps:" + StringUtils.join(gaps, ","));
         
         StreamingBuildRequest streamingBuildRequest = new StreamingBuildRequest();
-        streamingBuildRequest.setStreaming(streamingConfig.getName());
+        streamingBuildRequest.setCubeName(cubeName);
         if (gaps.size() > 0) {
             streamingBuildRequest.setMessage(gaps.size() + " gaps in cube: " + StringUtils.join(gaps, ","));
         } else {
@@ -326,8 +323,6 @@ public class StreamingController extends BasicController {
         return streamingBuildRequest;
 
     }
-
-    
 
     public void setStreamingService(StreamingService streamingService) {
         this.streamingService = streamingService;

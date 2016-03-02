@@ -137,10 +137,14 @@ public class HelixClusterAdmin {
 
         IdealState idealState = admin.getResourceIdealState(clusterName, resourceName);
 
-        StreamingConfig streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamingBuildRequest.getStreaming());
-        List<String> partitions = streamingConfig.getPartitions();
+        String cubeName = streamingBuildRequest.getCubeName();
+        StreamingConfig streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfigByCubeName(cubeName);
+        if (streamingConfig.getPartitions() == null) {
+            streamingConfig.setPartitions(Maps.<String, List<String>>newConcurrentMap());
+        }
+        List<String> partitions = streamingConfig.getPartitions().get(cubeName);
         if (partitions == null) {
-            partitions = Lists.newArrayList();
+            partitions = Lists.<String>newArrayList();
         }
 
         if (partitions.size() != idealState.getNumPartitions() || idealState.getNumPartitions() >= kylinConfig.getClusterMaxPartitionPerRegion()) {
@@ -152,14 +156,17 @@ public class HelixClusterAdmin {
             logger.info("Drop and create resource: " + resourceName);
             cleanResourcePartitions(resourceName);
             idealState = admin.getResourceIdealState(clusterName, resourceName);
-            streamingConfig.getPartitions().clear();
+            streamingConfig.getPartitions().get(cubeName).clear();
             StreamingManager.getInstance(kylinConfig).updateStreamingConfig(streamingConfig);
-            streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamingBuildRequest.getStreaming());
-            partitions = Lists.newArrayList();
+            streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfigByCubeName(cubeName);
+            partitions = streamingConfig.getPartitions().get(cubeName);
+            if (partitions == null) {
+                partitions = Lists.<String>newArrayList();
+            }
         }
 
         partitions.add(streamingBuildRequest.toPartitionName());
-        streamingConfig.setPartitions(partitions);
+        streamingConfig.getPartitions().put(cubeName, partitions);
         StreamingManager.getInstance(kylinConfig).updateStreamingConfig(streamingConfig);
 
         idealState.setNumPartitions(idealState.getNumPartitions() + 1);

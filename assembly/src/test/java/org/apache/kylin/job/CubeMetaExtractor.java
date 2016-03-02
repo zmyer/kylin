@@ -225,12 +225,11 @@ public class CubeMetaExtractor extends AbstractApplication {
         return realizationRegistry.getRealization(realizationEntry.getType(), realizationEntry.getRealization());
     }
 
-    private void dealWithStreaming(CubeInstance cube) {
-        for (StreamingConfig streamingConfig : streamingManager.listAllStreaming()) {
-            if (streamingConfig.getCubeName() != null && streamingConfig.getCubeName().equalsIgnoreCase(cube.getName())) {
-                requiredResources.add(StreamingConfig.concatResourcePath(streamingConfig.getName()));
-                requiredResources.add(KafkaConfig.concatResourcePath(streamingConfig.getName()));
-            }
+    private void dealWithStreaming(String tableName) {
+        StreamingConfig streamingConfig = streamingManager.getStreamingConfig(tableName);
+        if (streamingConfig != null) {
+            requiredResources.add(StreamingConfig.concatResourcePath(streamingConfig.getName()));
+            requiredResources.add(KafkaConfig.concatResourcePath(streamingConfig.getName()));
         }
     }
 
@@ -245,11 +244,11 @@ public class CubeMetaExtractor extends AbstractApplication {
             String modelName = cubeDesc.getModelName();
             DataModelDesc modelDesc = metadataManager.getDataModelDesc(modelName);
 
-            dealWithStreaming(cube);
 
             for (String tableName : modelDesc.getAllTables()) {
                 addRequired(requiredResources, TableDesc.concatResourcePath(tableName));
                 addOptional(optionalResources, TableDesc.concatExdResourcePath(tableName));
+                dealWithStreaming(tableName);
             }
 
             addRequired(requiredResources, DataModelDesc.concatResourcePath(modelDesc.getName()));

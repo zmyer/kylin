@@ -25,7 +25,7 @@ import static org.apache.kylin.rest.helix.HelixClusterAdmin.RESOURCE_STREAME_CUB
 
 public class StreamingBuildRequest {
 
-    private String streaming;
+    private String cubeName;
     private long start;
     private long end;
     private String message;
@@ -34,18 +34,18 @@ public class StreamingBuildRequest {
     public StreamingBuildRequest() {
     }
 
-    public StreamingBuildRequest(String streaming, long start, long end) {
-        this.streaming = streaming;
+    public StreamingBuildRequest(String cubeName, long start, long end) {
+        this.cubeName = cubeName;
         this.start = start;
         this.end = end;
     }
 
-    public String getStreaming() {
-        return streaming;
+    public String getCubeName() {
+        return cubeName;
     }
 
-    public void setStreaming(String streaming) {
-        this.streaming = streaming;
+    public void setCubeName(String cubeName) {
+        this.cubeName = cubeName;
     }
 
     public boolean isSuccessful() {
@@ -81,7 +81,7 @@ public class StreamingBuildRequest {
     }
 
     public String toResourceName() {
-        return HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX + streaming;
+        return HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX + cubeName;
     }
     public String toPartitionName() {
         return start + "_" + end;

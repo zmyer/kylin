@@ -49,7 +49,7 @@ public class StreamCubeBuildTransitionHandler extends TransitionHandler {
         if (streamingBuildRequest != null && isSuccessfullyBuilt(streamingBuildRequest) == false) {
             KylinConfigBase.getKylinHome();
             String segmentId = streamingBuildRequest.toPartitionName();
-            String cmd = KylinConfigBase.getKylinHome() + "/bin/kylin.sh streaming start " + streamingBuildRequest.getStreaming() + " " + segmentId + " -oneoff true -start " + streamingBuildRequest.getStart() + " -end " + streamingBuildRequest.getEnd() + " -streaming " + streamingBuildRequest.getStreaming();
+            String cmd = KylinConfigBase.getKylinHome() + "/bin/kylin.sh streaming start " + streamingBuildRequest.getCubeName() + " " + segmentId + " -oneoff true -start " + streamingBuildRequest.getStart() + " -end " + streamingBuildRequest.getEnd() + " -cube " + streamingBuildRequest.getCubeName();
             runCMD(cmd);
         }
     }
@@ -63,15 +63,14 @@ public class StreamCubeBuildTransitionHandler extends TransitionHandler {
         if (isSuccessfullyBuilt(streamingBuildRequest) == false) {
             KylinConfigBase.getKylinHome();
             String segmentId = streamingBuildRequest.toPartitionName();
-            String cmd = KylinConfigBase.getKylinHome() + "/bin/kylin.sh streaming stop " + streamingBuildRequest.getStreaming() + " " + segmentId;
+            String cmd = KylinConfigBase.getKylinHome() + "/bin/kylin.sh streaming stop " + streamingBuildRequest.getCubeName() + " " + segmentId;
             runCMD(cmd);
         }
         */
     }
 
     private boolean isSuccessfullyBuilt(StreamingBuildRequest streamingBuildRequest) {
-        final StreamingConfig streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamingBuildRequest.getStreaming());
-        final String cubeName = streamingConfig.getCubeName();
+        final String cubeName = streamingBuildRequest.getCubeName();
         final CubeInstance cube = CubeManager.getInstance(kylinConfig).getCube(cubeName);
         for (CubeSegment segment : cube.getSegments()) {
             if (segment.getDateRangeStart() <= streamingBuildRequest.getStart() && segment.getDateRangeEnd() >= streamingBuildRequest.getEnd()) {
@@ -84,35 +83,35 @@ public class StreamCubeBuildTransitionHandler extends TransitionHandler {
     }
 
     private StreamingBuildRequest getStreamingBuildRequest(String resourceName, String partitionName) {
-        String streamConfigName = resourceName.substring(HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX.length());
+        String cubeName = resourceName.substring(HelixClusterAdmin.RESOURCE_STREAME_CUBE_PREFIX.length());
         int partitionId = Integer.parseInt(partitionName.substring(partitionName.lastIndexOf("_") + 1));
 
-        StreamingConfig streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamConfigName);
+        StreamingConfig streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfigByCubeName(cubeName);
 
         int retry = 0;
-        while ((streamingConfig.getPartitions() == null || streamingConfig.getPartitions().isEmpty() || partitionId > (streamingConfig.getPartitions().size() - 1) && retry < 10)) {
-            logger.error("No segment information in StreamingConfig '" + streamConfigName + "' for partition " + partitionId);
+        while ((streamingConfig.getPartitions() == null || streamingConfig.getPartitions().get(cubeName) == null || streamingConfig.getPartitions().get(cubeName).isEmpty() || partitionId > (streamingConfig.getPartitions().get(cubeName).size() - 1) && retry < 10)) {
+            logger.error("No segment information in StreamingConfig '" + cubeName + "' for partition " + partitionId);
             logger.error("Wait for 0.5 second...");
             try {
                 Thread.sleep(500);
             } catch (InterruptedException e) {
                 logger.error("", e);
             }
-            streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfig(streamConfigName);
+            streamingConfig = StreamingManager.getInstance(kylinConfig).getStreamingConfigByCubeName(cubeName);
             retry++;
         }
 
         if (retry >= 10) {
-            logger.error("No segment information in StreamingConfig '" + streamConfigName + "' for partition " + partitionId);
-            logger.warn("Abor building...");
+            logger.error("No segment information in StreamingConfig '" + cubeName + "' for partition " + partitionId);
+            logger.warn("Abort building...");
             return null;
         }
 
-        String startEnd = streamingConfig.getPartitions().get(partitionId);
+        String startEnd = streamingConfig.getPartitions().get(cubeName).get(partitionId);
         long start = Long.parseLong(startEnd.substring(0, startEnd.indexOf("_")));
         long end = Long.parseLong(startEnd.substring(startEnd.indexOf("_") + 1));
         StreamingBuildRequest request = new StreamingBuildRequest();
-        request.setStreaming(streamConfigName);
+        request.setCubeName(cubeName);
         request.setStart(start);
         request.setEnd(end);
         return request;

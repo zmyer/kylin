@@ -40,6 +40,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.kylin.common.persistence.JsonSerializer;
 import org.apache.kylin.common.persistence.ResourceStore;
@@ -56,37 +57,33 @@ public class StreamingConfig extends RootPersistentEntity {
 
     public static Serializer<StreamingConfig> SERIALIZER = new JsonSerializer<StreamingConfig>(StreamingConfig.class);
 
+    public static final String STREAMING_TYPE_KAFKA = "kafka";
+
     @JsonProperty("name")
     private String name;
 
-    @JsonProperty("iiName")
-    private String iiName;
-
-    @JsonProperty("cubeName")
-    private String cubeName;
-
-    @JsonProperty("partitions")
-    private List<String> partitions;
+    @JsonProperty("type")
+    private String type = STREAMING_TYPE_KAFKA;
 
     @JsonProperty("max_gap")
     private long maxGap = 30 * 60 * 1000l; // 30 minutes
+
     @JsonProperty("max_gap_number")
     private int maxGapNumber = 10; // 10
+
+    @JsonProperty("partitions")
+    private Map<String, List<String>> partitions; // realization partition info, key is realization name
     
-    public String getCubeName() {
-        return cubeName;
+    public String getType() {
+        return type;
     }
 
-    public void setCubeName(String cubeName) {
-        this.cubeName = cubeName;
+    public void setType(String type) {
+        this.type = type;
     }
 
-    public String getIiName() {
-        return iiName;
-    }
-
-    public void setIiName(String iiName) {
-        this.iiName = iiName;
+    public String getResourcePath() {
+        return concatResourcePath(name);
     }
 
     public String getName() {
@@ -97,20 +94,8 @@ public class StreamingConfig extends RootPersistentEntity {
         this.name = name;
     }
 
-    public String getResourcePath() {
-        return concatResourcePath(name);
-    }
-
-    public static String concatResourcePath(String streamingName) {
-        return ResourceStore.STREAMING_RESOURCE_ROOT + "/" + streamingName + ".json";
-    }
-
-    public List<String> getPartitions() {
-        return partitions;
-    }
-
-    public void setPartitions(List<String> partitions) {
-        this.partitions = partitions;
+    public static String concatResourcePath(String name) {
+        return ResourceStore.STREAMING_RESOURCE_ROOT + "/" + name + ".json";
     }
 
     public long getMaxGap() {
@@ -127,6 +112,14 @@ public class StreamingConfig extends RootPersistentEntity {
 
     public void setMaxGapNumber(int maxGapNumber) {
         this.maxGapNumber = maxGapNumber;
+    }
+
+    public Map<String, List<String>> getPartitions() {
+        return partitions;
+    }
+
+    public void setPartitions(Map<String, List<String>> partitions) {
+        this.partitions = partitions;
     }
 
     @Override
