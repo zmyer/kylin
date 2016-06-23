@@ -55,12 +55,10 @@ public final class StringStreamingParser extends StreamingParser {
     }
 
     @Override
-    public StreamingMessage parse(Object message) {
-        MessageAndOffset kafkaMessage = (MessageAndOffset) message;
-        final ByteBuffer payload = kafkaMessage.message().payload();
-        byte[] bytes = new byte[payload.limit()];
-        payload.get(bytes);
-        return new StreamingMessage(Lists.newArrayList(new String(bytes).split(",")), kafkaMessage.offset(), kafkaMessage.offset(), Collections.<String, Object> emptyMap());
+    public StreamingMessage parse(ByteBuffer message) {
+        byte[] bytes = new byte[message.limit()];
+        message.get(bytes);
+        return new StreamingMessage(Lists.newArrayList(new String(bytes).split(",")), 0, 0, Collections.<String, Object> emptyMap());
     }
 
     @Override
