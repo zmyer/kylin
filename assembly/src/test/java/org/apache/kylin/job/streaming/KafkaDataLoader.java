@@ -34,13 +34,20 @@ import org.apache.kylin.source.kafka.config.KafkaClusterConfig;
 import com.google.common.base.Function;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.Lists;
+import org.apache.kylin.source.kafka.config.KafkaConfig;
 
 /**
  * Load prepared data into kafka(for test use)
  */
-public class KafkaDataLoader {
+public class KafkaDataLoader extends StreamDataLoader {
+    List<KafkaClusterConfig> kafkaClusterConfigs;
 
-    public static void loadIntoKafka(List<KafkaClusterConfig> kafkaClusterConfigs, List<String> messages) {
+    public KafkaDataLoader(KafkaConfig kafkaConfig) {
+        super(kafkaConfig);
+        this.kafkaClusterConfigs = kafkaConfig.getKafkaClusterConfigs();
+    }
+
+    public void loadIntoKafka(List<String> messages) {
 
         KafkaClusterConfig clusterConfig = kafkaClusterConfigs.get(0);
         String brokerList = StringUtils.join(Collections2.transform(clusterConfig.getBrokerConfigs(), new Function<BrokerConfig, String>() {
