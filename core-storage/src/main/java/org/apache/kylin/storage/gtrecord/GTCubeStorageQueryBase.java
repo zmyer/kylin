@@ -99,8 +99,8 @@ public abstract class GTCubeStorageQueryBase implements IStorageQuery {
 
         // isExactAggregation? meaning: tuples returned from storage requires no further aggregation in query engine
         Set<TblColRef> singleValuesD = findSingleValueColumns(filter);
-        boolean isExactAggregation = isExactAggregation(cuboid, groups, otherDimsD, singleValuesD, derivedPostAggregation);
-        context.setExactAggregation(isExactAggregation);
+        context.setExactAggregation(isExactAggregation(cuboid, groups, otherDimsD, singleValuesD, derivedPostAggregation));
+        context.setGroupingByAllCuboidDimensions(isGroupingByAllCuboidDimensions(cuboid, groupsD));
 
         // replace derived columns in filter with host columns; columns on loosened condition must be added to group by
         TupleFilter filterD = translateDerived(filter, groupsD);
@@ -219,6 +219,14 @@ public abstract class GTCubeStorageQueryBase implements IStorageQuery {
             }
         }
         return resultD;
+    }
+
+    private boolean isGroupingByAllCuboidDimensions(Cuboid cuboid, Collection<TblColRef> groupD) {
+        if (cuboid.getColumns().size() != groupD.size()) {
+            return false;
+        }
+
+        return groupD.containsAll(cuboid.getColumns());
     }
 
     private boolean isExactAggregation(Cuboid cuboid, Collection<TblColRef> groups, Set<TblColRef> othersD, Set<TblColRef> singleValuesD, Set<TblColRef> derivedPostAggregation) {
