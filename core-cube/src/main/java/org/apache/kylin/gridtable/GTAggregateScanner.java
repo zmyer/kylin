@@ -119,7 +119,7 @@ public class GTAggregateScanner implements IGTScanner {
     }
 
     @Override
-    public int getScannedRowCount() {
+    public long getScannedRowCount() {
         return inputScanner.getScannedRowCount();
     }
 

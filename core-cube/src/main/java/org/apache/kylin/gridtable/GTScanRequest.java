@@ -164,7 +164,7 @@ public class GTScanRequest {
             }
 
             if (!doAggr) {//Skip reading this section if you're not profiling! 
-                int scanned = result.getScannedRowCount();
+                long scanned = result.getScannedRowCount();
                 lookAndForget(result);
                 return new EmptyGTScanner(scanned);
             }
