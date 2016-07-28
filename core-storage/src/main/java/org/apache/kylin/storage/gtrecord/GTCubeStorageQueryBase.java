@@ -20,6 +20,7 @@ package org.apache.kylin.storage.gtrecord;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -100,7 +101,7 @@ public abstract class GTCubeStorageQueryBase implements IStorageQuery {
         // isExactAggregation? meaning: tuples returned from storage requires no further aggregation in query engine
         Set<TblColRef> singleValuesD = findSingleValueColumns(filter);
         context.setExactAggregation(isExactAggregation(cuboid, groups, otherDimsD, singleValuesD, derivedPostAggregation));
-        context.setGroupingByAllCuboidDimensions(isGroupingByAllCuboidDimensions(cuboid, groupsD));
+        context.setNeedStorageAggregation(isNeedStorageAggregation(cuboid, groupsD, singleValuesD));
 
         // replace derived columns in filter with host columns; columns on loosened condition must be added to group by
         TupleFilter filterD = translateDerived(filter, groupsD);
@@ -221,12 +222,19 @@ public abstract class GTCubeStorageQueryBase implements IStorageQuery {
         return resultD;
     }
 
-    private boolean isGroupingByAllCuboidDimensions(Cuboid cuboid, Collection<TblColRef> groupD) {
-        if (cuboid.getColumns().size() != groupD.size()) {
-            return false;
-        }
+    private boolean isNeedStorageAggregation(Cuboid cuboid, Collection<TblColRef> groupD, Collection<TblColRef> singleValueD) {
 
-        return groupD.containsAll(cuboid.getColumns());
+        logger.info("GroupD :" + groupD);
+        logger.info("SingleValueD :" + singleValueD);
+        logger.info("Cuboid columns :" + cuboid.getColumns());
+        HashSet<TblColRef> temp = Sets.newHashSet();
+        temp.addAll(groupD);
+        temp.addAll(singleValueD);
+        if (cuboid.getColumns().size() != temp.size()) {
+            return false;
+        } else {
+            return true;
+        }
     }
 
     private boolean isExactAggregation(Cuboid cuboid, Collection<TblColRef> groups, Set<TblColRef> othersD, Set<TblColRef> singleValuesD, Set<TblColRef> derivedPostAggregation) {

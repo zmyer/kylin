@@ -39,7 +39,7 @@ public class StorageContext {
     private boolean acceptPartialResult;
 
     private boolean exactAggregation;
-    private boolean groupingByAllCuboidDimensions;
+    private boolean needStorageAggregation;
     private boolean enableLimit;
     private boolean enableCoprocessor;
 
@@ -144,12 +144,12 @@ public class StorageContext {
         this.partialResultReturned = partialResultReturned;
     }
 
-    public boolean isGroupingByAllCuboidDimensions() {
-        return groupingByAllCuboidDimensions;
+    public boolean isNeedStorageAggregation() {
+        return needStorageAggregation;
     }
 
-    public void setGroupingByAllCuboidDimensions(boolean groupingByAllCuboidDimensions) {
-        this.groupingByAllCuboidDimensions = groupingByAllCuboidDimensions;
+    public void setNeedStorageAggregation(boolean needStorageAggregation) {
+        this.needStorageAggregation = needStorageAggregation;
     }
 
     public void setExactAggregation(boolean isExactAggregation) {
