@@ -223,6 +223,7 @@ public abstract class GTCubeStorageQueryBase implements IStorageQuery {
     }
 
     public boolean isNeedStorageAggregation(Cuboid cuboid, Collection<TblColRef> groupD, Collection<TblColRef> singleValueD, boolean isExactAggregation) {
+        logger.info("Set isNeedStorageAggregation to " + !isExactAggregation);
         return !isExactAggregation;
     }
 
