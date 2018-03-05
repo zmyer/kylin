@@ -23,14 +23,16 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.kylin.common.util.Array;
 import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.metadata.model.TableDesc;
-import org.apache.kylin.source.ReadableTable;
-import org.apache.kylin.source.ReadableTable.TableReader;
+import org.apache.kylin.source.IReadableTable;
+import org.apache.kylin.source.IReadableTable.TableReader;
 
 import com.google.common.collect.Sets;
 
@@ -44,10 +46,10 @@ abstract public class LookupTable<T> {
 
     protected TableDesc tableDesc;
     protected String[] keyColumns;
-    protected ReadableTable table;
-    protected ConcurrentHashMap<Array<T>, T[]> data;
+    protected IReadableTable table;
+    protected Map<Array<T>, T[]> data;
 
-    public LookupTable(TableDesc tableDesc, String[] keyColumns, ReadableTable table) throws IOException {
+    public LookupTable(TableDesc tableDesc, String[] keyColumns, IReadableTable table) throws IOException {
         this.tableDesc = tableDesc;
         this.keyColumns = keyColumns;
         this.table = table;
@@ -67,7 +69,7 @@ abstract public class LookupTable<T> {
                 initRow(reader.getRow(), keyIndex);
             }
         } finally {
-            reader.close();
+            IOUtils.closeQuietly(reader);
         }
     }
 
@@ -81,7 +83,7 @@ abstract public class LookupTable<T> {
         Array<T> key = new Array<T>(keyCols);
 
         if (data.containsKey(key))
-            throw new IllegalStateException("Dup key found, key=" + toString(keyCols) + ", value1=" + toString(data.get(key)) + ", value2=" + toString(value));
+            throw new IllegalStateException("The table: " + tableDesc.getName() + " Dup key found, key=" + toString(keyCols) + ", value1=" + toString(data.get(key)) + ", value2=" + toString(value));
 
         data.put(key, value);
     }

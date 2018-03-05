@@ -115,19 +115,27 @@ public class Tuple implements ITuple {
         // BigDecimal during cube build for best precision
         if ("double".equals(dataType) && fieldValue instanceof BigDecimal) {
             fieldValue = ((BigDecimal) fieldValue).doubleValue();
-        } else if ("integer".equals(dataType) && fieldValue instanceof Number) {
-            fieldValue = ((Number) fieldValue).intValue();
+        } else if ("decimal".equals(dataType)) {
+            if (fieldValue instanceof BigDecimal) {
+                fieldValue = normalizeDecimal((BigDecimal) fieldValue);
+            } else if (fieldValue instanceof Number) {
+                fieldValue = new BigDecimal(((Number) fieldValue).doubleValue());
+            }
         } else if ("float".equals(dataType) && fieldValue instanceof BigDecimal) {
             fieldValue = ((BigDecimal) fieldValue).floatValue();
+        } else if ("integer".equals(dataType) && fieldValue instanceof Number) {
+            fieldValue = ((Number) fieldValue).intValue();
+        } else if ("bigint".equals(dataType) && fieldValue instanceof Number) {
+            fieldValue = ((Number) fieldValue).longValue();
+        } else if ("smallint".equals(dataType) && fieldValue instanceof Number) {
+            fieldValue = ((Number) fieldValue).shortValue();
+        } else if ("tinyint".equals(dataType) && fieldValue instanceof Number) {
+            fieldValue = ((Number) fieldValue).byteValue();
         } else if ("date".equals(dataType) && fieldValue instanceof Long) {
-            long millis = ((Long) fieldValue).longValue();
+            long millis = (Long) fieldValue;
             fieldValue = (int) (millis / (1000 * 3600 * 24));
-        } else if ("smallint".equals(dataType) && fieldValue instanceof Long) {
-            fieldValue = ((Long) fieldValue).shortValue();
         } else if ((!"varchar".equals(dataType) || !"char".equals(dataType)) && fieldValue instanceof String) {
             fieldValue = convertOptiqCellValue((String) fieldValue, dataType);
-        } else if ("bigint".equals(dataType) && fieldValue instanceof Double) {
-            fieldValue = ((Double) fieldValue).longValue();
         }
 
         values[idx] = fieldValue;
@@ -139,6 +147,14 @@ public class Tuple implements ITuple {
         else if (o instanceof DoubleMutable)
             o = ((DoubleMutable) o).get();
         return o;
+    }
+
+    private static BigDecimal normalizeDecimal(BigDecimal input) {
+        if (input.scale() < 0) {
+            return input.setScale(0);
+        } else {
+            return input;
+        }
     }
 
     public boolean hasColumn(TblColRef column) {
@@ -174,32 +190,34 @@ public class Tuple implements ITuple {
         if (strValue == null)
             return null;
 
-        if ((strValue.equals("") || strValue.equals("\\N")) && !dataTypeName.equals("string"))
+        if ((strValue.equals("") || strValue.equals("\\N")) && !dataTypeName.equals("string")
+                && !dataTypeName.startsWith("varchar"))
             return null;
 
-        // TODO use data type enum instead of string comparison
-        if ("date".equals(dataTypeName)) {
+        switch (dataTypeName) {
+        case "date":
             // convert epoch time
             return Integer.valueOf(dateToEpicDays(strValue));// Optiq expects Integer instead of Long. by honma
-        } else if ("timestamp".equals(dataTypeName) || "datetime".equals(dataTypeName)) {
+        case "datetime":
+        case "timestamp":
             return Long.valueOf(DateFormat.stringToMillis(strValue));
-        } else if ("tinyint".equals(dataTypeName)) {
+        case "tinyint":
             return Byte.valueOf(strValue);
-        } else if ("short".equals(dataTypeName) || "smallint".equals(dataTypeName)) {
+        case "smallint":
             return Short.valueOf(strValue);
-        } else if ("integer".equals(dataTypeName)) {
+        case "integer":
             return Integer.valueOf(strValue);
-        } else if ("long".equals(dataTypeName) || "bigint".equals(dataTypeName)) {
+        case "bigint":
             return Long.valueOf(strValue);
-        } else if ("double".equals(dataTypeName)) {
+        case "double":
             return Double.valueOf(strValue);
-        } else if ("decimal".equals(dataTypeName)) {
-            return new BigDecimal(strValue);
-        } else if ("float".equals(dataTypeName)) {
+        case "decimal":
+            return normalizeDecimal(new BigDecimal(strValue));
+        case "float":
             return Float.valueOf(strValue);
-        } else if ("boolean".equals(dataTypeName)) {
-            return Boolean.valueOf(strValue);
-        } else {
+        case "boolean":
+            return Boolean.valueOf(strValue) || "1".equals(strValue); // in some extended encodings boolean might be encoded as a number
+        default:
             return strValue;
         }
     }

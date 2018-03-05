@@ -26,8 +26,12 @@ import org.apache.kylin.common.util.DateFormat;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+@SuppressWarnings("serial")
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.NONE, getterVisibility = JsonAutoDetect.Visibility.NONE, isGetterVisibility = JsonAutoDetect.Visibility.NONE, setterVisibility = JsonAutoDetect.Visibility.NONE)
 public class BadQueryEntry extends RootPersistentEntity implements Comparable<BadQueryEntry> {
+    
+    public static final String ADJ_SLOW = "Slow";
+    public static final String ADJ_PUSHDOWN = "Pushdown";
 
     @JsonProperty("adj")
     private String adj;
@@ -43,8 +47,11 @@ public class BadQueryEntry extends RootPersistentEntity implements Comparable<Ba
     private String thread;
     @JsonProperty("user")
     private String user;
+    @JsonProperty("query_id")
+    private String queryId;
 
-    public BadQueryEntry(String sql, String adj, long startTime, float runningSec, String server, String thread, String user) {
+    public BadQueryEntry(String sql, String adj, long startTime, float runningSec, String server, String thread,
+            String user, String queryId) {
         this.updateRandomUuid();
         this.adj = adj;
         this.sql = sql;
@@ -53,10 +60,19 @@ public class BadQueryEntry extends RootPersistentEntity implements Comparable<Ba
         this.server = server;
         this.thread = thread;
         this.user = user;
+        this.queryId = queryId;
     }
 
     public BadQueryEntry() {
 
+    }
+
+    public String getQueryId() {
+        return queryId;
+    }
+
+    public void setQueryId(String queryId) {
+        this.queryId = queryId;
     }
 
     public String getUser() {
@@ -117,13 +133,11 @@ public class BadQueryEntry extends RootPersistentEntity implements Comparable<Ba
 
     @Override
     public int compareTo(BadQueryEntry obj) {
-        if (this.startTime == obj.startTime) {
-            return 0;
-        } else if (this.startTime > obj.startTime) {
-            return 1;
-        } else {
-            return -1;
-        }
+        int comp = Long.compare(this.startTime, obj.startTime);
+        if (comp != 0)
+            return comp;
+        else
+            return this.sql.compareTo(obj.sql);
     }
 
     @Override
@@ -140,10 +154,10 @@ public class BadQueryEntry extends RootPersistentEntity implements Comparable<Ba
 
         BadQueryEntry entry = (BadQueryEntry) o;
 
-        if (!sql.equals(entry.sql))
+        if (startTime != entry.startTime)
             return false;
 
-        if (startTime != entry.startTime)
+        if (!sql.equals(entry.sql))
             return false;
 
         return true;

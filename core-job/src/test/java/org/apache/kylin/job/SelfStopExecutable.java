@@ -26,21 +26,40 @@ import org.apache.kylin.job.execution.ExecuteResult;
  */
 public class SelfStopExecutable extends BaseTestExecutable {
 
+    volatile boolean doingWork;
+
     public SelfStopExecutable() {
         super();
     }
 
     @Override
     protected ExecuteResult doWork(ExecutableContext context) throws ExecuteException {
+        doingWork = true;
         try {
-            Thread.sleep(5000);
-        } catch (InterruptedException e) {
-        }
-        if (isDiscarded()) {
-            return new ExecuteResult(ExecuteResult.State.STOPPED, "stopped");
-        } else {
-            return new ExecuteResult(ExecuteResult.State.SUCCEED, "succeed");
+            for (int i = 0; i < 20; i++) {
+                sleepOneSecond();
+                
+                if (isDiscarded())
+                    return new ExecuteResult(ExecuteResult.State.STOPPED, "stopped");
+            }
+                
+            return new ExecuteResult();
+        } finally {
+            doingWork = false;
         }
     }
 
+    private void sleepOneSecond() {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void waitForDoWork() {
+        while (doingWork) {
+            sleepOneSecond();
+        }
+    }
 }

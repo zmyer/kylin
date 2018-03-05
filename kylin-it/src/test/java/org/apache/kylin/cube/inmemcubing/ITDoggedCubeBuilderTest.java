@@ -1,21 +1,19 @@
 /*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
- *  * Licensed to the Apache Software Foundation (ASF) under one
- *  * or more contributor license agreements.  See the NOTICE file
- *  * distributed with this work for additional information
- *  * regarding copyright ownership.  The ASF licenses this file
- *  * to you under the Apache License, Version 2.0 (the
- *  * "License"); you may not use this file except in compliance
- *  * with the License.  You may obtain a copy of the License at
- *  * 
- *  *     http://www.apache.org/licenses/LICENSE-2.0
- *  * 
- *  * Unless required by applicable law or agreed to in writing, software
- *  * distributed under the License is distributed on an "AS IS" BASIS,
- *  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  * See the License for the specific language governing permissions and
- *  * limitations under the License.
- * /
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.apache.kylin.cube.inmemcubing;
@@ -28,7 +26,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -40,7 +37,10 @@ import org.apache.kylin.common.util.Dictionary;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
+import org.apache.kylin.engine.EngineFactory;
 import org.apache.kylin.gridtable.GTRecord;
+import org.apache.kylin.metadata.MetadataConstants;
+import org.apache.kylin.metadata.model.IJoinedFlatTableDesc;
 import org.apache.kylin.metadata.model.TblColRef;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -56,7 +56,7 @@ public class ITDoggedCubeBuilderTest extends LocalFileMetadataTestCase {
     private static final Logger logger = LoggerFactory.getLogger(ITDoggedCubeBuilderTest.class);
 
     private static final int INPUT_ROWS = 10000;
-    private static final int SPLIT_ROWS = 5000;
+    private static final int SPLIT_ROWS = 2000;
     private static final int THREADS = 4;
 
     private static CubeInstance cube;
@@ -70,8 +70,9 @@ public class ITDoggedCubeBuilderTest extends LocalFileMetadataTestCase {
         KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
         CubeManager cubeManager = CubeManager.getInstance(kylinConfig);
 
-        cube = cubeManager.getCube("test_kylin_cube_without_slr_left_join_empty");
-        flatTable = LocalFileMetadataTestCase.LOCALMETA_TEST_DATA + "/data/flatten_data_for_without_slr_left_join.csv";
+        cube = cubeManager.getCube("ssb");
+        flatTable = LocalFileMetadataTestCase.LOCALMETA_TEST_DATA + "/data/" + MetadataConstants.KYLIN_INTERMEDIATE_PREFIX
+                + "ssb_19920101000000_19920201000000.csv";
         dictionaryMap = ITInMemCubeBuilderTest.getDictionaryMap(cube, flatTable);
     }
 
@@ -83,23 +84,23 @@ public class ITDoggedCubeBuilderTest extends LocalFileMetadataTestCase {
     @Test
     public void test() throws Exception {
 
-        ArrayBlockingQueue<List<String>> queue = new ArrayBlockingQueue<List<String>>(1000);
+        ArrayBlockingQueue<String[]> queue = new ArrayBlockingQueue<String[]>(1000);
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         long randSeed = System.currentTimeMillis();
 
-        DoggedCubeBuilder doggedBuilder = new DoggedCubeBuilder(cube.getDescriptor(), dictionaryMap);
+        IJoinedFlatTableDesc flatDesc = EngineFactory.getJoinedFlatTableDesc(cube.getDescriptor());
+        DoggedCubeBuilder doggedBuilder = new DoggedCubeBuilder(cube.getCuboidScheduler(), flatDesc, dictionaryMap);
         doggedBuilder.setConcurrentThreads(THREADS);
-        doggedBuilder.setSplitRowThreshold(SPLIT_ROWS);
         FileRecordWriter doggedResult = new FileRecordWriter();
 
         {
             Future<?> future = executorService.submit(doggedBuilder.buildAsRunnable(queue, doggedResult));
-            ITInMemCubeBuilderTest.feedData(cube, flatTable, queue, INPUT_ROWS, randSeed);
+            ITInMemCubeBuilderTest.feedData(cube, flatTable, queue, INPUT_ROWS, randSeed, SPLIT_ROWS);
             future.get();
             doggedResult.close();
         }
 
-        InMemCubeBuilder inmemBuilder = new InMemCubeBuilder(cube.getDescriptor(), dictionaryMap);
+        InMemCubeBuilder inmemBuilder = new InMemCubeBuilder(cube.getCuboidScheduler(), flatDesc, dictionaryMap);
         inmemBuilder.setConcurrentThreads(THREADS);
         FileRecordWriter inmemResult = new FileRecordWriter();
 
@@ -110,7 +111,7 @@ public class ITDoggedCubeBuilderTest extends LocalFileMetadataTestCase {
             inmemResult.close();
         }
 
-        fileCompare(doggedResult.file, inmemResult.file);
+        fileCompare(inmemResult.file, doggedResult.file);
         doggedResult.file.delete();
         inmemResult.file.delete();
     }

@@ -26,15 +26,15 @@ import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.engine.mr.CubingJob;
+import org.apache.kylin.engine.mr.exception.SegmentNotFoundException;
 import org.apache.kylin.job.exception.ExecuteException;
 import org.apache.kylin.job.execution.AbstractExecutable;
 import org.apache.kylin.job.execution.ExecutableContext;
 import org.apache.kylin.job.execution.ExecuteResult;
+import org.apache.kylin.metadata.model.SegmentRange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- */
 public class UpdateCubeInfoAfterMergeStep extends AbstractExecutable {
 
     private static final Logger logger = LoggerFactory.getLogger(UpdateCubeInfoAfterMergeStep.class);
@@ -51,23 +51,29 @@ public class UpdateCubeInfoAfterMergeStep extends AbstractExecutable {
 
         CubeSegment mergedSegment = cube.getSegmentById(CubingExecutableUtil.getSegmentId(this.getParams()));
         if (mergedSegment == null) {
-            return new ExecuteResult(ExecuteResult.State.FAILED, "there is no segment with id:" + CubingExecutableUtil.getSegmentId(this.getParams()));
+            return ExecuteResult.createFailed(new SegmentNotFoundException(
+                    "there is no segment with id:" + CubingExecutableUtil.getSegmentId(this.getParams())));
         }
 
-        CubingJob cubingJob = (CubingJob) executableManager.getJob(CubingExecutableUtil.getCubingJobId(this.getParams()));
+        CubingJob cubingJob = (CubingJob) getManager().getJob(CubingExecutableUtil.getCubingJobId(this.getParams()));
         long cubeSizeBytes = cubingJob.findCubeSizeBytes();
 
         // collect source statistics
         List<String> mergingSegmentIds = CubingExecutableUtil.getMergingSegmentIds(this.getParams());
         if (mergingSegmentIds.isEmpty()) {
-            return new ExecuteResult(ExecuteResult.State.FAILED, "there are no merging segments");
+            return ExecuteResult.createFailed(new SegmentNotFoundException("there are no merging segments"));
         }
         long sourceCount = 0L;
         long sourceSize = 0L;
+
+        boolean isOffsetCube = mergedSegment.isOffsetCube();
+        Long tsStartMin = Long.MAX_VALUE, tsEndMax = 0L;
         for (String id : mergingSegmentIds) {
             CubeSegment segment = cube.getSegmentById(id);
             sourceCount += segment.getInputRecords();
             sourceSize += segment.getInputRecordsSize();
+            tsStartMin = Math.min(tsStartMin, segment.getTSRange().start.v);
+            tsEndMax = Math.max(tsEndMax, segment.getTSRange().end.v);
         }
 
         // update segment info
@@ -75,16 +81,19 @@ public class UpdateCubeInfoAfterMergeStep extends AbstractExecutable {
         mergedSegment.setInputRecords(sourceCount);
         mergedSegment.setInputRecordsSize(sourceSize);
         mergedSegment.setLastBuildJobID(CubingExecutableUtil.getCubingJobId(this.getParams()));
-        mergedSegment.setIndexPath(CubingExecutableUtil.getIndexPath(this.getParams()));
         mergedSegment.setLastBuildTime(System.currentTimeMillis());
+
+        if (isOffsetCube == true) {
+            SegmentRange.TSRange tsRange = new SegmentRange.TSRange(tsStartMin, tsEndMax);
+            mergedSegment.setTSRange(tsRange);
+        }
 
         try {
             cubeManager.promoteNewlyBuiltSegments(cube, mergedSegment);
             return new ExecuteResult(ExecuteResult.State.SUCCEED);
         } catch (IOException e) {
             logger.error("fail to update cube after merge", e);
-            return new ExecuteResult(ExecuteResult.State.ERROR, e.getLocalizedMessage());
+            return ExecuteResult.createError(e);
         }
     }
-
 }

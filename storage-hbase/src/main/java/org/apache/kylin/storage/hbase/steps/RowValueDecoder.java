@@ -25,26 +25,22 @@ import java.util.Collection;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.kylin.common.util.Bytes;
 import org.apache.kylin.cube.model.HBaseColumnDesc;
-import org.apache.kylin.measure.MeasureDecoder;
+import org.apache.kylin.measure.MeasureCodec;
 import org.apache.kylin.metadata.datatype.DoubleMutable;
 import org.apache.kylin.metadata.datatype.LongMutable;
 import org.apache.kylin.metadata.model.FunctionDesc;
 import org.apache.kylin.metadata.model.MeasureDesc;
 import org.apache.kylin.storage.hbase.util.Results;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  */
 public class RowValueDecoder implements Cloneable {
 
-    private static final Logger logger = LoggerFactory.getLogger(RowValueDecoder.class);
-
     private final HBaseColumnDesc hbaseColumn;
     private final byte[] hbaseColumnFamily;
     private final byte[] hbaseColumnQualifier;
 
-    private final MeasureDecoder codec;
+    private final MeasureCodec codec;
     private final BitSet projectionIndex;
     private final MeasureDesc[] measures;
     private final Object[] values;
@@ -55,7 +51,7 @@ public class RowValueDecoder implements Cloneable {
         this.hbaseColumnQualifier = Bytes.toBytes(hbaseColumn.getQualifier());
         this.projectionIndex = new BitSet();
         this.measures = hbaseColumn.getMeasures();
-        this.codec = new MeasureDecoder(measures);
+        this.codec = new MeasureCodec(measures);
         this.values = new Object[measures.length];
     }
 

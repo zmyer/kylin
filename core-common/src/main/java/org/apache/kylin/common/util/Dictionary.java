@@ -26,6 +26,8 @@ import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 
 import org.apache.kylin.common.KylinConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A bi-way dictionary that maps from dimension/column values to IDs and vice
@@ -43,6 +45,8 @@ import org.apache.kylin.common.KylinConfig;
  * @author yangli9
  */
 abstract public class Dictionary<T> implements Serializable {
+    private static final Logger logger = LoggerFactory.getLogger(Dictionary.class);
+
     private static final long serialVersionUID = 1L;
 
     // ID with all bit-1 (0xff e.g.) reserved for NULL value
@@ -94,8 +98,12 @@ abstract public class Dictionary<T> implements Serializable {
     final public int getIdFromValue(T value, int roundingFlag) throws IllegalArgumentException {
         if (isNullObjectForm(value))
             return nullId();
-        else
-            return getIdFromValueImpl(value, roundingFlag);
+
+        int id = getIdFromValueImpl(value, roundingFlag);
+        if (id == -1) {
+            throw new IllegalArgumentException("Value : " + value + " not exists");
+        }
+        return id;
     }
 
     final public boolean containsValue(T value) throws IllegalArgumentException {
@@ -130,73 +138,35 @@ abstract public class Dictionary<T> implements Serializable {
             return getValueFromIdImpl(id);
     }
 
-    abstract protected T getValueFromIdImpl(int id);
-
     /**
-     * Convenient form of
-     * <code>getIdFromValueBytes(value, offset, len, 0)</code>
-     */
-    final public int getIdFromValueBytes(byte[] value, int offset, int len) throws IllegalArgumentException {
-        return getIdFromValueBytes(value, offset, len, 0);
-    }
-
-    /**
-     * A lower level API, return ID integer from raw value bytes. In case of not found 
-     * <p>
-     * - if roundingFlag=0, throw IllegalArgumentException; <br>
-     * - if roundingFlag<0, the closest smaller ID integer if exist; <br>
-     * - if roundingFlag>0, the closest bigger ID integer if exist. <br>
-     * <p>
-     * Bypassing the cache layer, this could be significantly slower than getIdFromValue(T value).
-     * 
+     * @return the value bytes corresponds to the given ID
      * @throws IllegalArgumentException
-     *             if value is not found in dictionary and rounding is off;
-     *             or if rounding cannot find a smaller or bigger ID
+     *             if ID is not found in dictionary
      */
-    final public int getIdFromValueBytes(byte[] value, int offset, int len, int roundingFlag) throws IllegalArgumentException {
-        if (isNullByteForm(value, offset, len))
-            return nullId();
-        else {
-            int id = getIdFromValueBytesImpl(value, offset, len, roundingFlag);
-            if (id < 0)
-                throw new IllegalArgumentException("Value not exists!");
-            return id;
-        }
-    }
-
-    protected boolean isNullByteForm(byte[] value, int offset, int len) {
-        return value == null;
-    }
-
-    abstract protected int getIdFromValueBytesImpl(byte[] value, int offset, int len, int roundingFlag);
-
-    final public byte[] getValueBytesFromId(int id) {
+    final public byte[] getValueByteFromId(int id) throws IllegalArgumentException {
         if (isNullId(id))
-            return BytesUtil.EMPTY_BYTE_ARRAY;
+            return null;
         else
             return getValueBytesFromIdImpl(id);
     }
 
-    abstract protected byte[] getValueBytesFromIdImpl(int id);
+    protected int cacheHitCount = 0;
+    protected int cacheMissCount = 0;
 
-    /**
-     * A lower level API, get byte values from ID, return the number of bytes
-     * written. Bypassing the cache layer, this could be significantly slower
-     * than getIdFromValue(T value).
-     *
-     * @return size of value bytes, 0 if empty string, -1 if null
-     *
-     * @throws IllegalArgumentException
-     *             if ID is not found in dictionary
-     */
-    final public int getValueBytesFromId(int id, byte[] returnValue, int offset) throws IllegalArgumentException {
-        if (isNullId(id))
-            return -1;
-        else
-            return getValueBytesFromIdImpl(id, returnValue, offset);
+    protected byte[] getValueBytesFromIdImpl(int id) {
+        throw new  UnsupportedOperationException() ;
+
     }
 
-    abstract protected int getValueBytesFromIdImpl(int id, byte[] returnValue, int offset);
+    public void printlnStatistics() {
+        logger.info("cache hit count: " + cacheHitCount);
+        logger.info("cache miss count: " + cacheMissCount);
+        logger.info("cache hit percent: " + cacheHitCount * 1.0 / (cacheMissCount + cacheHitCount));
+        cacheHitCount = 0;
+        cacheMissCount = 0;
+    }
+
+    abstract protected T getValueFromIdImpl(int id);
 
     abstract public void dump(PrintStream out);
 

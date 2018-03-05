@@ -18,6 +18,7 @@
 
 package org.apache.kylin.query.relnode;
 
+import java.math.BigDecimal;
 import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -35,6 +36,7 @@ import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelTrait;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
@@ -59,13 +61,16 @@ import org.apache.kylin.metadata.filter.CompareTupleFilter;
 import org.apache.kylin.metadata.filter.ConstantTupleFilter;
 import org.apache.kylin.metadata.filter.DynamicTupleFilter;
 import org.apache.kylin.metadata.filter.ExtractTupleFilter;
+import org.apache.kylin.metadata.filter.FilterOptimizeTransformer;
 import org.apache.kylin.metadata.filter.LogicalTupleFilter;
 import org.apache.kylin.metadata.filter.TupleFilter;
 import org.apache.kylin.metadata.filter.TupleFilter.FilterOperatorEnum;
+import org.apache.kylin.metadata.filter.UnsupportedTupleFilter;
 import org.apache.kylin.metadata.filter.function.Functions;
 import org.apache.kylin.metadata.model.TblColRef;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
@@ -73,15 +78,13 @@ import com.google.common.collect.Sets;
  */
 public class OLAPFilterRel extends Filter implements OLAPRel {
 
-    private static class TupleFilterVisitor extends RexVisitorImpl<TupleFilter> {
+    static class TupleFilterVisitor extends RexVisitorImpl<TupleFilter> {
 
-        private final ColumnRowType inputRowType;
-        private final OLAPContext context;
+        final ColumnRowType inputRowType;
 
-        public TupleFilterVisitor(ColumnRowType inputRowType, OLAPContext context) {
+        public TupleFilterVisitor(ColumnRowType inputRowType) {
             super(true);
             this.inputRowType = inputRowType;
-            this.context = context;
         }
 
         @Override
@@ -140,8 +143,19 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
             case OTHER_FUNCTION:
                 filter = Functions.getFunctionTupleFilter(op.getName());
                 break;
+            case PLUS:
+            case MINUS:
+            case TIMES:
+            case DIVIDE:
+                TupleFilter f = dealWithTrivialExpr(call);
+                if (f != null) {
+                    // is a trivial expr
+                    return f;
+                }
+                //else go to default
             default:
-                throw new UnsupportedOperationException(op.getName());
+                filter = new UnsupportedTupleFilter(FilterOperatorEnum.UNSUPPORTED);
+                break;
             }
 
             for (RexNode operand : call.operands) {
@@ -158,18 +172,65 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
                 if (inFilter != null) {
                     filter = inFilter;
                 }
+            } else if (op.getKind() == SqlKind.NOT) {
+                assert (filter.getChildren().size() == 1);
+                filter = filter.getChildren().get(0).reverse();
             }
             return filter;
         }
 
-        private TupleFilter cast(TupleFilter filter, RelDataType type) {
+        //KYLIN-2597 - Deal with trivial expression in filters like x = 1 + 2 
+        TupleFilter dealWithTrivialExpr(RexCall call) {
+            ImmutableList<RexNode> operators = call.operands;
+            if (operators.size() != 2) {
+                return null;
+            }
+
+            BigDecimal left = null;
+            BigDecimal right = null;
+            for (RexNode rexNode : operators) {
+                if (!(rexNode instanceof RexLiteral)) {
+                    return null;// only trivial expr with constants
+                }
+
+                RexLiteral temp = (RexLiteral) rexNode;
+                if (temp.getType().getFamily() != SqlTypeFamily.NUMERIC || !(temp.getValue() instanceof BigDecimal)) {
+                    return null;// only numeric constants now
+                }
+
+                if (left == null) {
+                    left = (BigDecimal) temp.getValue();
+                } else {
+                    right = (BigDecimal) temp.getValue();
+                }
+            }
+
+            Preconditions.checkNotNull(left);
+            Preconditions.checkNotNull(right);
+
+            switch (call.op.getKind()) {
+            case PLUS:
+                return new ConstantTupleFilter(left.add(right).toString());
+            case MINUS:
+                return new ConstantTupleFilter(left.subtract(right).toString());
+            case TIMES:
+                return new ConstantTupleFilter(left.multiply(right).toString());
+            case DIVIDE:
+                return new ConstantTupleFilter(left.divide(right).toString());
+            default:
+                return null;
+            }
+        }
+
+        TupleFilter cast(TupleFilter filter, RelDataType type) {
             if ((filter instanceof ConstantTupleFilter) == false) {
                 return filter;
             }
 
             ConstantTupleFilter constFilter = (ConstantTupleFilter) filter;
 
-            if (type.getFamily() == SqlTypeFamily.DATE || type.getFamily() == SqlTypeFamily.DATETIME || type.getFamily() == SqlTypeFamily.TIMESTAMP) {
+            if (type.getFamily() == SqlTypeFamily.DATE || type.getFamily() == SqlTypeFamily.DATETIME
+                    || type.getFamily() == SqlTypeFamily.TIMESTAMP) {
                 List<String> newValues = Lists.newArrayList();
                 for (Object v : constFilter.getValues()) {
                     if (v == null)
@@ -182,7 +243,7 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
             return constFilter;
         }
 
-        private CompareTupleFilter mergeToInClause(TupleFilter filter) {
+        CompareTupleFilter mergeToInClause(TupleFilter filter) {
             List<? extends TupleFilter> children = filter.getChildren();
             TblColRef inColumn = null;
             List<Object> inValues = new LinkedList<Object>();
@@ -222,13 +283,12 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
         @Override
         public TupleFilter visitInputRef(RexInputRef inputRef) {
             TblColRef column = inputRowType.getColumnByIndex(inputRef.getIndex());
-            context.allColumns.add(column);
             ColumnTupleFilter filter = new ColumnTupleFilter(column);
             return filter;
         }
 
         @SuppressWarnings("unused")
-        private String normToTwoDigits(int i) {
+        String normToTwoDigits(int i) {
             if (i < 10)
                 return "0" + i;
             else
@@ -265,8 +325,8 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
         }
     }
 
-    private ColumnRowType columnRowType;
-    private OLAPContext context;
+    ColumnRowType columnRowType;
+    OLAPContext context;
 
     public OLAPFilterRel(RelOptCluster cluster, RelTraitSet traits, RelNode child, RexNode condition) {
         super(cluster, traits, child, condition);
@@ -287,6 +347,7 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
 
     @Override
     public void implementOLAP(OLAPImplementor implementor) {
+        implementor.fixSharedOlapTableScan(this);
         implementor.visitChild(getInput(), this);
 
         this.columnRowType = buildColumnRowType();
@@ -296,43 +357,42 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
         if (!context.afterAggregate) {
             translateFilter(context);
         } else {
-            context.afterSkippedFilter = true;//having clause is skipped
+            context.afterHavingClauseFilter = true;
+
+            TupleFilterVisitor visitor = new TupleFilterVisitor(this.columnRowType);
+            TupleFilter havingFilter = this.condition.accept(visitor);
+            if (context.havingFilter == null)
+                context.havingFilter = havingFilter;
         }
     }
 
-    private ColumnRowType buildColumnRowType() {
+    ColumnRowType buildColumnRowType() {
         OLAPRel olapChild = (OLAPRel) getInput();
         ColumnRowType inputColumnRowType = olapChild.getColumnRowType();
         return inputColumnRowType;
     }
 
-    private void translateFilter(OLAPContext context) {
+    void translateFilter(OLAPContext context) {
         if (this.condition == null) {
             return;
         }
 
-        TupleFilterVisitor visitor = new TupleFilterVisitor(this.columnRowType, context);
-        context.filter = this.condition.accept(visitor);
+        TupleFilterVisitor visitor = new TupleFilterVisitor(this.columnRowType);
+        TupleFilter filter = this.condition.accept(visitor);
 
-        context.filterColumns = collectColumns(context.filter);
-    }
+        // optimize the filter, the optimization has to be segment-irrelevant
+        filter = new FilterOptimizeTransformer().transform(filter);
 
-    private Set<TblColRef> collectColumns(TupleFilter filter) {
-        Set<TblColRef> ret = Sets.newHashSet();
-        collectColumnsRecursively(filter, ret);
-        return ret;
-    }
-
-    private void collectColumnsRecursively(TupleFilter filter, Set<TblColRef> collector) {
-        if (filter == null)
-            return;
-
-        if (filter instanceof ColumnTupleFilter) {
-            collector.add(((ColumnTupleFilter) filter).getColumn());
+        Set<TblColRef> filterColumns = Sets.newHashSet();
+        TupleFilter.collectColumns(filter, filterColumns);
+        for (TblColRef tblColRef : filterColumns) {
+            if (!tblColRef.isInnerColumn() && context.belongToContextTables(tblColRef)) {
+                context.allColumns.add(tblColRef);
+                context.filterColumns.add(tblColRef);
+            }
         }
-        for (TupleFilter child : filter.getChildren()) {
-            collectColumnsRecursively(child, collector);
-        }
+
+        context.filter = TupleFilter.and(context.filter, filter);
     }
 
     @Override
@@ -378,5 +438,11 @@ public class OLAPFilterRel extends Filter implements OLAPRel {
         RelTraitSet oldTraitSet = this.traitSet;
         this.traitSet = this.traitSet.replace(trait);
         return oldTraitSet;
+    }
+
+    @Override
+    public RelWriter explainTerms(RelWriter pw) {
+        return super.explainTerms(pw).item("ctx",
+                context == null ? "" : String.valueOf(context.id) + "@" + context.realization);
     }
 }

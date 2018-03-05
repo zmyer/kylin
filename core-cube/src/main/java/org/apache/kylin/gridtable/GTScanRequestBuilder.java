@@ -18,8 +18,10 @@
 
 package org.apache.kylin.gridtable;
 
+import java.util.BitSet;
 import java.util.List;
 
+import org.apache.kylin.common.debug.BackdoorToggles;
 import org.apache.kylin.common.util.ImmutableBitSet;
 import org.apache.kylin.metadata.filter.TupleFilter;
 
@@ -27,6 +29,7 @@ public class GTScanRequestBuilder {
     private GTInfo info;
     private List<GTScanRange> ranges;
     private TupleFilter filterPushDown;
+    private TupleFilter havingFilterPushDown;
     private ImmutableBitSet dimensions;
     private ImmutableBitSet aggrGroupBy = null;
     private ImmutableBitSet aggrMetrics = null;
@@ -34,7 +37,11 @@ public class GTScanRequestBuilder {
     private boolean allowStorageAggregation = true;
     private double aggCacheMemThreshold = 0;
     private int storageScanRowNumThreshold = Integer.MAX_VALUE;// storage should terminate itself when $storageScanRowNumThreshold cuboid rows are scanned, and throw exception.   
-    private int storagePushDownLimit = Integer.MAX_VALUE;// storage can quit working when $toragePushDownLimit aggregated rows are produced. 
+    private int storagePushDownLimit = Integer.MAX_VALUE;// storage can quit scanning safely when $toragePushDownLimit aggregated rows are produced. 
+    private StorageLimitLevel storageLimitLevel = StorageLimitLevel.NO_LIMIT;
+    private long startTime = -1;
+    private long timeout = -1;
+    private String storageBehavior = null;
 
     public GTScanRequestBuilder setInfo(GTInfo info) {
         this.info = info;
@@ -48,6 +55,11 @@ public class GTScanRequestBuilder {
 
     public GTScanRequestBuilder setFilterPushDown(TupleFilter filterPushDown) {
         this.filterPushDown = filterPushDown;
+        return this;
+    }
+
+    public GTScanRequestBuilder setHavingFilterPushDown(TupleFilter havingFilterPushDown) {
+        this.havingFilterPushDown = havingFilterPushDown;
         return this;
     }
 
@@ -91,7 +103,50 @@ public class GTScanRequestBuilder {
         return this;
     }
 
+    public GTScanRequestBuilder setStorageLimitLevel(StorageLimitLevel storageLimitLevel) {
+        this.storageLimitLevel = storageLimitLevel;
+        return this;
+    }
+
+    public GTScanRequestBuilder setStartTime(long startTime) {
+        this.startTime = startTime;
+        return this;
+    }
+
+    public GTScanRequestBuilder setTimeout(long timeout) {
+        this.timeout = timeout;
+        return this;
+    }
+
+    public GTScanRequestBuilder setStorageBehavior(String storageBehavior) {
+        this.storageBehavior = storageBehavior;
+        return this;
+    }
+
     public GTScanRequest createGTScanRequest() {
-        return new GTScanRequest(info, ranges, dimensions, aggrGroupBy, aggrMetrics, aggrMetricsFuncs, filterPushDown, allowStorageAggregation, aggCacheMemThreshold, storageScanRowNumThreshold, storagePushDownLimit);
+        if (aggrGroupBy == null) {
+            aggrGroupBy = new ImmutableBitSet(new BitSet());
+        }
+
+        if (aggrMetrics == null) {
+            aggrMetrics = new ImmutableBitSet(new BitSet());
+        }
+
+        if (aggrMetricsFuncs == null) {
+            aggrMetricsFuncs = new String[0];
+        }
+
+        if (storageBehavior == null) {
+            storageBehavior = BackdoorToggles.getCoprocessorBehavior() == null
+                    ? StorageSideBehavior.SCAN_FILTER_AGGR_CHECKMEM.toString()
+                    : BackdoorToggles.getCoprocessorBehavior();
+        }
+
+        this.startTime = startTime == -1 ? System.currentTimeMillis() : startTime;
+        this.timeout = timeout == -1 ? 300000 : timeout;
+
+        return new GTScanRequest(info, ranges, dimensions, aggrGroupBy, aggrMetrics, aggrMetricsFuncs, filterPushDown,
+                havingFilterPushDown, allowStorageAggregation, aggCacheMemThreshold, storageScanRowNumThreshold,
+                storagePushDownLimit, storageLimitLevel, storageBehavior, startTime, timeout);
     }
 }

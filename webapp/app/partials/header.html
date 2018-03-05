@@ -50,8 +50,11 @@
           <li class="{{activeTab=='jobs'?'purple':'green'}}" ng-if="userService.isAuthorized()">
             <a href="jobs">Monitor</a>
           </li>
-          <li class="{{activeTab=='admin'?'purple':'green'}}" ng-if="userService.isAuthorized()">
+          <li class="{{activeTab=='admin'?'purple':'green'}}" ng-if="userService.hasRole('ROLE_ADMIN')">
             <a href="admin">System</a>
+          </li>
+          <li class="{{activeTab=='dashboard'?'purple':'green'}}" ng-if="userService.isAuthorized() && isShowDashboard">
+            <a href="dashboard">Dashboard</a>
           </li>
         </ul>
         <ul class="nav navbar-nav navbar-right">

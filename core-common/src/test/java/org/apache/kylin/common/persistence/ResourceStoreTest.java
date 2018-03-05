@@ -23,22 +23,54 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.List;
 import java.util.NavigableSet;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.kylin.common.KylinConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Be called by LocalFileResourceStoreTest and ITHBaseResourceStoreTest.
+ * Be called by LocalFileResourceStoreTest, ITHBaseResourceStoreTest and ITHDFSResourceStoreTest.
  */
 public class ResourceStoreTest {
 
-    public static void testAStore(ResourceStore store) throws IOException {
+    private static final Logger logger = LoggerFactory.getLogger(ResourceStoreTest.class);
+
+    private static final String PERFORMANCE_TEST_ROOT_PATH = "/performance";
+
+    private static final int TEST_RESOURCE_COUNT = 100;
+
+    public static void testAStore(String url, KylinConfig kylinConfig) throws Exception {
+        String oldUrl = replaceMetadataUrl(kylinConfig, url);
+        testAStore(ResourceStore.getStore(kylinConfig));
+        replaceMetadataUrl(kylinConfig, oldUrl);
+    }
+
+    public static void testPerformance(String url, KylinConfig kylinConfig) throws Exception {
+        String oldUrl = replaceMetadataUrl(kylinConfig, url);
+        testPerformance(ResourceStore.getStore(kylinConfig));
+        replaceMetadataUrl(kylinConfig, oldUrl);
+    }
+
+    public static String mockUrl(String tag, KylinConfig kylinConfig) {
+        String str = kylinConfig.getMetadataUrlPrefix() + "@" + tag;
+        return str;
+    }
+
+    private static void testAStore(ResourceStore store) throws IOException {
         testBasics(store);
         testGetAllResources(store);
+    }
+
+    private static void testPerformance(ResourceStore store) throws IOException {
+        logger.info("Test basic functions");
+        testAStore(store);
+        logger.info("Basic function ok. Start to test performance for class : " + store.getClass());
+        logger.info("Write metadata time : " + testWritePerformance(store));
+        logger.info("Read metadata time  " + testReadPerformance(store));
+        logger.info("Performance test end. Class : " + store.getClass());
     }
 
     private static void testGetAllResources(ResourceStore store) throws IOException {
@@ -110,9 +142,10 @@ public class ResourceStoreTest {
         }
 
         // list
-        NavigableSet<String> list;
+        NavigableSet<String> list = null;
 
         list = store.listResources(dir1);
+        System.out.println(list);
         assertTrue(list.contains(path1));
         assertTrue(list.contains(path2) == false);
 
@@ -143,49 +176,33 @@ public class ResourceStoreTest {
         assertTrue(list == null || list.contains(path2) == false);
     }
 
-    @SuppressWarnings("serial")
-    public static class StringEntity extends RootPersistentEntity {
-
-        public static final Serializer<StringEntity> serializer = new Serializer<StringEntity>() {
-            @Override
-            public void serialize(StringEntity obj, DataOutputStream out) throws IOException {
-                out.writeUTF(obj.str);
-            }
-
-            @Override
-            public StringEntity deserialize(DataInputStream in) throws IOException {
-                String str = in.readUTF();
-                return new StringEntity(str);
-            }
-        };
-
-        String str;
-
-        public StringEntity(String str) {
-            this.str = str;
+    private static long testWritePerformance(ResourceStore store) throws IOException {
+        store.deleteResource(PERFORMANCE_TEST_ROOT_PATH);
+        StringEntity content = new StringEntity("something");
+        long startTime = System.currentTimeMillis();
+        for (int i = 0; i < TEST_RESOURCE_COUNT; i++) {
+            String resourcePath = PERFORMANCE_TEST_ROOT_PATH + "/res_" + i;
+            store.putResource(resourcePath, content, 0, StringEntity.serializer);
         }
+        return System.currentTimeMillis() - startTime;
+    }
 
-        @Override
-        public int hashCode() {
-            final int prime = 31;
-            int result = super.hashCode();
-            result = prime * result + ((str == null) ? 0 : str.hashCode());
-            return result;
+    private static long testReadPerformance(ResourceStore store) throws IOException {
+        long startTime = System.currentTimeMillis();
+        int step = 0; //avoid compiler optimization
+        for (int i = 0; i < TEST_RESOURCE_COUNT; i++) {
+            String resourcePath = PERFORMANCE_TEST_ROOT_PATH + "/res_" + i;
+            StringEntity t = store.getResource(resourcePath, StringEntity.class, StringEntity.serializer);
+            step |= t.toString().length();
         }
+        logger.info("step : " + step);
+        return System.currentTimeMillis() - startTime;
+    }
 
-        @Override
-        public boolean equals(Object obj) {
-            if (obj == this)
-                return true;
-            if (!(obj instanceof StringEntity))
-                return false;
-            return StringUtils.equals(this.str, ((StringEntity) obj).str);
-        }
-
-        @Override
-        public String toString() {
-            return str;
-        }
+    public static String replaceMetadataUrl(KylinConfig kylinConfig, String newUrl) {
+        String oldUrl = kylinConfig.getMetadataUrl().toString();
+        kylinConfig.setProperty("kylin.metadata.url", newUrl);
+        return oldUrl;
     }
 
 }

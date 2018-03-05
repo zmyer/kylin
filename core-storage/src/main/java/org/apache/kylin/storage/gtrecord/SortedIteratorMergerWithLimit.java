@@ -52,13 +52,13 @@ public class SortedIteratorMergerWithLimit<E extends Cloneable> extends SortedIt
         this.comparator = comparator;
     }
 
-    protected Iterator<E> getIteratorInternal(PriorityQueue<PeekingImpl<E>> heap) {
-        return new MergedIteratorWithLimit<E>(heap, limit, comparator);
+    public Iterator<E> getIterator() {
+        return new MergedIteratorWithLimit(limit, comparator);
     }
 
-    static class MergedIteratorWithLimit<E extends Cloneable> implements Iterator<E> {
+    class MergedIteratorWithLimit implements Iterator<E> {
 
-        private final PriorityQueue<PeekingImpl<E>> heap;
+        private PriorityQueue<PeekingImpl<E>> heap;
         private final Comparator<E> comparator;
 
         private boolean nextFetched = false;
@@ -70,14 +70,16 @@ public class SortedIteratorMergerWithLimit<E extends Cloneable> extends SortedIt
 
         private PeekingImpl<E> lastSource = null;
 
-        public MergedIteratorWithLimit(PriorityQueue<PeekingImpl<E>> heap, int limit, Comparator<E> comparator) {
-            this.heap = heap;
+        public MergedIteratorWithLimit(int limit, Comparator<E> comparator) {
             this.limit = limit;
             this.comparator = comparator;
         }
 
         @Override
         public boolean hasNext() {
+            if (heap == null) {
+                heap = getHeap();
+            }
             if (nextFetched) {
                 return true;
             }
@@ -94,6 +96,7 @@ public class SortedIteratorMergerWithLimit<E extends Cloneable> extends SortedIt
                 PeekingImpl<E> first = heap.poll();
                 E current = first.next();
                 try {
+                    //clone is protected on Object, have to use reflection to call the overwritten clone method in subclasses
                     current = (E) current.getClass().getMethod("clone").invoke(current);
                 } catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
                     throw new RuntimeException(e);
@@ -125,7 +128,8 @@ public class SortedIteratorMergerWithLimit<E extends Cloneable> extends SortedIt
 
             //TODO: remove this check when validated
             if (last != null) {
-                Preconditions.checkState(comparator.compare(last, fetched) <= 0, "Not sorted! last: " + last + " fetched: " + fetched);
+                if (comparator.compare(last, fetched) > 0)
+                    throw new IllegalStateException("Not sorted! last: " + last + " fetched: " + fetched);
             }
 
             last = fetched;

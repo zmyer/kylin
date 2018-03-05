@@ -1,5 +1,4 @@
-/**
- *
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,7 +14,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+*/
 
 package org.apache.kylin.common.util;
 
@@ -80,14 +79,6 @@ public class Pair<T1, T2> implements Serializable {
         this.first = a;
     }
 
-    public T1 getKey() {
-        return getFirst();
-    }
-
-    public void setKey(T1 a) {
-        setFirst(a);
-    }
-
     /**
      * Return the second element stored in the pair.
      * @return T2
@@ -102,14 +93,6 @@ public class Pair<T1, T2> implements Serializable {
      */
     public void setSecond(T2 b) {
         this.second = b;
-    }
-
-    public T2 getValue() {
-        return getSecond();
-    }
-
-    public void setValue(T2 b) {
-        setSecond(b);
     }
 
     @Override

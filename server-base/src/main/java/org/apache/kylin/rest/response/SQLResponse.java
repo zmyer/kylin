@@ -21,13 +21,19 @@ package org.apache.kylin.rest.response;
 import java.io.Serializable;
 import java.util.List;
 
-import org.apache.kylin.rest.model.SelectedColumnMeta;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.kylin.common.QueryContext;
+import org.apache.kylin.metadata.querymeta.SelectedColumnMeta;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.google.common.collect.Lists;
 
 public class SQLResponse implements Serializable {
     protected static final long serialVersionUID = 1L;
 
-    // private static final Logger logger =
-    // LoggerFactory.getLogger(SQLResponse.class);
+    private static final Logger logger = LoggerFactory.getLogger(SQLResponse.class);
 
     // the data type for each column
     protected List<SelectedColumnMeta> columnMetas;
@@ -49,20 +55,32 @@ public class SQLResponse implements Serializable {
     // if isException, the detailed exception message
     protected String exceptionMessage;
 
+    // if isException, the related Exception
+    protected Throwable throwable;
+
     protected long duration;
 
     protected boolean isPartial = false;
 
     protected long totalScanCount;
 
+    protected long totalScanBytes;
+
     protected boolean hitExceptionCache = false;
 
     protected boolean storageCacheUsed = false;
 
+    protected boolean queryPushDown = false;
+
+    protected byte[] queryStatistics;
+    
+    protected String traceUrl = null;
+
     public SQLResponse() {
     }
 
-    public SQLResponse(List<SelectedColumnMeta> columnMetas, List<List<String>> results, int affectedRowCount, boolean isException, String exceptionMessage) {
+    public SQLResponse(List<SelectedColumnMeta> columnMetas, List<List<String>> results, int affectedRowCount,
+            boolean isException, String exceptionMessage) {
         this.columnMetas = columnMetas;
         this.results = results;
         this.affectedRowCount = affectedRowCount;
@@ -70,16 +88,8 @@ public class SQLResponse implements Serializable {
         this.exceptionMessage = exceptionMessage;
     }
 
-    public SQLResponse(List<SelectedColumnMeta> columnMetas, List<List<String>> results, String cube, int affectedRowCount, boolean isException, String exceptionMessage) {
-        this.columnMetas = columnMetas;
-        this.results = results;
-        this.cube = cube;
-        this.affectedRowCount = affectedRowCount;
-        this.isException = isException;
-        this.exceptionMessage = exceptionMessage;
-    }
-
-    public SQLResponse(List<SelectedColumnMeta> columnMetas, List<List<String>> results, String cube, int affectedRowCount, boolean isException, String exceptionMessage, boolean isPartial) {
+    public SQLResponse(List<SelectedColumnMeta> columnMetas, List<List<String>> results, String cube,
+            int affectedRowCount, boolean isException, String exceptionMessage, boolean isPartial, boolean isPushDown) {
         this.columnMetas = columnMetas;
         this.results = results;
         this.cube = cube;
@@ -87,6 +97,7 @@ public class SQLResponse implements Serializable {
         this.isException = isException;
         this.exceptionMessage = exceptionMessage;
         this.isPartial = isPartial;
+        this.queryPushDown = isPushDown;
     }
 
     public List<SelectedColumnMeta> getColumnMetas() {
@@ -129,6 +140,15 @@ public class SQLResponse implements Serializable {
         exceptionMessage = msg;
     }
 
+    @JsonIgnore
+    public Throwable getThrowable() {
+        return throwable;
+    }
+
+    public void setThrowable(Throwable throwable) {
+        this.throwable = throwable;
+    }
+
     public long getDuration() {
         return duration;
     }
@@ -142,12 +162,24 @@ public class SQLResponse implements Serializable {
         return isPartial;
     }
 
+    public boolean isPushDown() {
+        return queryPushDown;
+    }
+
     public long getTotalScanCount() {
         return totalScanCount;
     }
 
     public void setTotalScanCount(long totalScanCount) {
         this.totalScanCount = totalScanCount;
+    }
+
+    public long getTotalScanBytes() {
+        return totalScanBytes;
+    }
+
+    public void setTotalScanBytes(long totalScanBytes) {
+        this.totalScanBytes = totalScanBytes;
     }
 
     public boolean isHitExceptionCache() {
@@ -164,5 +196,35 @@ public class SQLResponse implements Serializable {
 
     public void setStorageCacheUsed(boolean storageCacheUsed) {
         this.storageCacheUsed = storageCacheUsed;
+    }
+
+    public String getTraceUrl() {
+        return traceUrl;
+    }
+
+    public void setTraceUrl(String traceUrl) {
+        this.traceUrl = traceUrl;
+    }
+    
+    @JsonIgnore
+    public List<QueryContext.CubeSegmentStatisticsResult> getCubeSegmentStatisticsList() {
+        try {
+            return queryStatistics == null ? Lists.<QueryContext.CubeSegmentStatisticsResult> newArrayList()
+                    : (List<QueryContext.CubeSegmentStatisticsResult>) SerializationUtils.deserialize(queryStatistics);
+        } catch (Exception e) { // deserialize exception should not block query
+            logger.warn("Error while deserialize queryStatistics due to " + e);
+            return Lists.newArrayList();
+        }
+    }
+
+    public void setCubeSegmentStatisticsList(
+            List<QueryContext.CubeSegmentStatisticsResult> cubeSegmentStatisticsList) {
+        try {
+            this.queryStatistics = cubeSegmentStatisticsList == null ? null
+                    : SerializationUtils.serialize((Serializable) cubeSegmentStatisticsList);
+        } catch (Exception e) { // serialize exception should not block query
+            logger.warn("Error while serialize queryStatistics due to " + e);
+            this.queryStatistics = null;
+        }
     }
 }

@@ -18,12 +18,11 @@
 
 package org.apache.kylin.rest.controller;
 
-import java.util.List;
-
 import org.apache.kylin.rest.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -40,18 +39,21 @@ import org.springframework.web.bind.annotation.RequestMethod;
  */
 @Controller
 @RequestMapping(value = "/user")
-public class UserController {
+public class UserController extends BasicController {
 
     private static final Logger logger = LoggerFactory.getLogger(UserController.class);
     @Autowired
+    @Qualifier("userService")
     UserService userService;
 
-    @RequestMapping(value = "/authentication", method = RequestMethod.POST, produces = "application/json")
+    @RequestMapping(value = "/authentication", method = RequestMethod.POST, produces = { "application/json" })
     public UserDetails authenticate() {
-        return authenticatedUser();
+        UserDetails userDetails = authenticatedUser();
+        logger.debug("User login: {}", userDetails);
+        return userDetails;
     }
 
-    @RequestMapping(value = "/authentication", method = RequestMethod.GET, produces = "application/json")
+    @RequestMapping(value = "/authentication", method = RequestMethod.GET, produces = { "application/json" })
     public UserDetails authenticatedUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
@@ -61,21 +63,13 @@ public class UserController {
         }
 
         if (authentication.getPrincipal() instanceof UserDetails) {
-            logger.debug("authentication.getPrincipal() is " + authentication.getPrincipal());
             return (UserDetails) authentication.getPrincipal();
         }
 
         if (authentication.getDetails() instanceof UserDetails) {
-            logger.debug("authentication.getDetails() is " + authentication.getDetails());
             return (UserDetails) authentication.getDetails();
         }
 
         return null;
     }
-
-    @RequestMapping(value = "/authentication/authorities", method = RequestMethod.GET, produces = "application/json")
-    public List<String> getAuthorities() {
-        return userService.listUserAuthorities();
-    }
-
 }

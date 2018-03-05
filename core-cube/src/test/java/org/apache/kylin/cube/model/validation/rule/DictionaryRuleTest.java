@@ -18,13 +18,19 @@
 
 package org.apache.kylin.cube.model.validation.rule;
 
-import static org.junit.Assert.assertEquals;
+import static org.apache.kylin.cube.model.validation.rule.DictionaryRule.ERROR_DUPLICATE_DICTIONARY_COLUMN;
+import static org.apache.kylin.cube.model.validation.rule.DictionaryRule.ERROR_GLOBAL_DICTIONNARY_ONLY_MEASURE;
+import static org.apache.kylin.cube.model.validation.rule.DictionaryRule.ERROR_REUSE_BUILDER_BOTH_EMPTY;
+import static org.apache.kylin.cube.model.validation.rule.DictionaryRule.ERROR_REUSE_BUILDER_BOTH_SET;
+import static org.apache.kylin.cube.model.validation.rule.DictionaryRule.ERROR_TRANSITIVE_REUSE;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.List;
 
+import com.google.common.collect.Lists;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.JsonUtil;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
@@ -32,23 +38,17 @@ import org.apache.kylin.cube.model.CubeDesc;
 import org.apache.kylin.cube.model.DictionaryDesc;
 import org.apache.kylin.cube.model.validation.ValidateContext;
 import org.apache.kylin.dict.GlobalDictionaryBuilder;
-import org.apache.kylin.metadata.MetadataManager;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-/**
- * Created by sunyerui on 16/6/1.
- */
 public class DictionaryRuleTest extends LocalFileMetadataTestCase {
     private static KylinConfig config;
-    private static MetadataManager metadataManager;
 
     @Before
     public void setUp() throws Exception {
         this.createTestMetadata();
         config = KylinConfig.getInstanceFromEnv();
-        metadataManager = MetadataManager.getInstance(config);
     }
 
     @After
@@ -61,44 +61,72 @@ public class DictionaryRuleTest extends LocalFileMetadataTestCase {
         DictionaryRule rule = new DictionaryRule();
 
         for (File f : new File(LocalFileMetadataTestCase.LOCALMETA_TEST_DATA + "/cube_desc/").listFiles()) {
+            if (!f.getName().endsWith("json")) {
+                continue;
+            }
             CubeDesc desc = JsonUtil.readValue(new FileInputStream(f), CubeDesc.class);
-            desc.init(config, metadataManager.getAllTablesMap());
+            desc.init(config);
             ValidateContext vContext = new ValidateContext();
             rule.validate(desc, vContext);
-            vContext.print(System.out);
             assertTrue(vContext.getResults().length == 0);
         }
     }
 
     @Test
     public void testBadDesc() throws IOException {
-        testBadDictionaryDesc("Column EDW.TEST_SITES.SITE_NAME has inconsistent builders " + "FakeBuilderClass and org.apache.kylin.dict.GlobalDictionaryBuilder", DictionaryDesc.create("SITE_NAME", null, "FakeBuilderClass"));
+        testDictionaryDesc(ERROR_DUPLICATE_DICTIONARY_COLUMN, DictionaryDesc.create("ORDER_ID", null, "FakeBuilderClass"));
+        testDictionaryDesc(ERROR_DUPLICATE_DICTIONARY_COLUMN, DictionaryDesc.create("ORDER_ID", null, GlobalDictionaryBuilder.class.getName()));
     }
 
     @Test
     public void testBadDesc2() throws IOException {
-        testBadDictionaryDesc("Column EDW.TEST_SITES.SITE_NAME has inconsistent builders " + "FakeBuilderClass and org.apache.kylin.dict.GlobalDictionaryBuilder", DictionaryDesc.create("lstg_site_id", "SITE_NAME", "FakeBuilderClass"));
+        testDictionaryDesc(ERROR_REUSE_BUILDER_BOTH_SET, DictionaryDesc.create("lstg_site_id", "SITE_NAME", "FakeBuilderClass"));
     }
 
     @Test
     public void testBadDesc3() throws IOException {
-        testBadDictionaryDesc("Column DEFAULT.TEST_KYLIN_FACT.LSTG_SITE_ID used as dimension and conflict with GlobalDictBuilder", DictionaryDesc.create("lstg_site_id", null, GlobalDictionaryBuilder.class.getName()));
+        testDictionaryDesc(ERROR_REUSE_BUILDER_BOTH_EMPTY, DictionaryDesc.create("lstg_site_id", null, null));
     }
 
-    private void testBadDictionaryDesc(String expectMessage, DictionaryDesc... descs) throws IOException {
+    @Test
+    public void testBadDesc4() throws IOException {
+        testDictionaryDesc(ERROR_TRANSITIVE_REUSE,
+                DictionaryDesc.create("lstg_site_id", "SELLER_ID", null),
+                DictionaryDesc.create("price", "lstg_site_id", null));
+    }
+
+    @Test
+    public void testBadDesc5() throws IOException {
+        testDictionaryDesc(ERROR_GLOBAL_DICTIONNARY_ONLY_MEASURE,
+                DictionaryDesc.create("CATEG_LVL2_NAME", null, GlobalDictionaryBuilder.class.getName()));
+    }
+
+    @Test
+    public void testGoodDesc2() throws IOException {
+        testDictionaryDesc(null, DictionaryDesc.create("SELLER_ID", null, GlobalDictionaryBuilder.class.getName()));
+    }
+
+    private void testDictionaryDesc(String expectMessage, DictionaryDesc... descs) throws IOException {
         DictionaryRule rule = new DictionaryRule();
         File f = new File(LocalFileMetadataTestCase.LOCALMETA_TEST_DATA + "/cube_desc/test_kylin_cube_without_slr_left_join_desc.json");
         CubeDesc desc = JsonUtil.readValue(new FileInputStream(f), CubeDesc.class);
 
+        List<DictionaryDesc> newDicts = Lists.newArrayList(desc.getDictionaries());
         for (DictionaryDesc dictDesc : descs) {
-            desc.getDictionaries().add(dictDesc);
+            newDicts.add(dictDesc);
         }
+        desc.setDictionaries(newDicts);
 
-        desc.init(config, metadataManager.getAllTablesMap());
+        desc.init(config);
         ValidateContext vContext = new ValidateContext();
         rule.validate(desc, vContext);
-        vContext.print(System.out);
-        assertTrue(vContext.getResults().length >= 1);
-        assertEquals(expectMessage, vContext.getResults()[0].getMessage());
+
+        if (expectMessage == null) {
+            assertTrue(vContext.getResults().length == 0);
+        } else {
+            assertTrue(vContext.getResults().length == 1);
+            String actualMessage = vContext.getResults()[0].getMessage();
+            assertTrue(actualMessage.startsWith(expectMessage));
+        }
     }
 }

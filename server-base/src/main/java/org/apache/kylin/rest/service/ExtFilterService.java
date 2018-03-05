@@ -23,39 +23,42 @@ import java.util.List;
 
 import org.apache.kylin.metadata.model.ExternalFilterDesc;
 import org.apache.kylin.rest.constant.Constant;
-import org.apache.kylin.rest.exception.InternalErrorException;
+import org.apache.kylin.rest.exception.BadRequestException;
+import org.apache.kylin.rest.msg.Message;
+import org.apache.kylin.rest.msg.MsgPicker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Component;
 
 @Component("extFilterService")
 public class ExtFilterService extends BasicService {
+    @SuppressWarnings("unused")
     private static final Logger logger = LoggerFactory.getLogger(ExtFilterService.class);
-
-    @Autowired
-    private AccessService accessService;
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public void saveExternalFilter(ExternalFilterDesc desc) throws IOException {
-        if (getMetadataManager().getExtFilterDesc(desc.getName()) != null) {
-            throw new InternalErrorException("The filter named " + desc.getName() + " already exists");
+        Message msg = MsgPicker.getMsg();
+
+        if (getTableManager().getExtFilterDesc(desc.getName()) != null) {
+            throw new BadRequestException(String.format(msg.getFILTER_ALREADY_EXIST(), desc.getName()));
         }
-        getMetadataManager().saveExternalFilter(desc);
+        getTableManager().saveExternalFilter(desc);
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public void updateExternalFilter(ExternalFilterDesc desc) throws IOException {
-        if (getMetadataManager().getExtFilterDesc(desc.getName()) == null) {
-            throw new InternalErrorException("The filter named " + desc.getName() + " does not exists");
+        Message msg = MsgPicker.getMsg();
+
+        if (getTableManager().getExtFilterDesc(desc.getName()) == null) {
+            throw new BadRequestException(String.format(msg.getFILTER_NOT_FOUND(), desc.getName()));
         }
-        getMetadataManager().saveExternalFilter(desc);
+        getTableManager().saveExternalFilter(desc);
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public void removeExternalFilter(String name) throws IOException {
-        getMetadataManager().removeExternalFilter(name);
+        getTableManager().removeExternalFilter(name);
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
@@ -70,7 +73,7 @@ public class ExtFilterService extends BasicService {
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public List<ExternalFilterDesc> listAllExternalFilters() {
-        return getMetadataManager().listAllExternalFilters();
+        return getTableManager().listAllExternalFilters();
     }
 
 }

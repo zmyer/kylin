@@ -20,14 +20,17 @@ package org.apache.kylin.rest.controller;
 
 import java.io.IOException;
 
-import org.apache.kylin.common.restclient.Broadcaster;
-import org.apache.kylin.common.restclient.Broadcaster.EVENT;
+import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.metadata.cachesync.Broadcaster;
+import org.apache.kylin.rest.request.CubeMigrationRequest;
 import org.apache.kylin.rest.service.CacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -40,40 +43,54 @@ import org.springframework.web.bind.annotation.ResponseBody;
 @Controller
 @RequestMapping(value = "/cache")
 public class CacheController extends BasicController {
+
+    @SuppressWarnings("unused")
     private static final Logger logger = LoggerFactory.getLogger(CacheController.class);
 
     @Autowired
+    @Qualifier("cacheService")
     private CacheService cacheService;
 
     /**
-     * Wipe system cache
-     *
-     * @param type  {@link Broadcaster.TYPE}
-     * @param event {@link Broadcaster.EVENT}
-     * @param name
-     * @return if the action success
-     * @throws IOException
+     * Announce wipe cache to all cluster nodes
      */
-    @RequestMapping(value = "/{type}/{name}/{event}", method = { RequestMethod.PUT })
+    @RequestMapping(value = "/announce/{entity}/{cacheKey}/{event}", method = { RequestMethod.PUT }, produces = { "application/json" })
     @ResponseBody
-    public void wipeCache(@PathVariable String type, @PathVariable String event, @PathVariable String name) throws IOException {
+    public void announceWipeCache(@PathVariable String entity, @PathVariable String event, @PathVariable String cacheKey) throws IOException {
+        cacheService.annouceWipeCache(entity, event, cacheKey);
+    }
 
-        Broadcaster.TYPE wipeType = Broadcaster.TYPE.getType(type);
-        EVENT wipeEvent = Broadcaster.EVENT.getEvent(event);
+    /**
+     * Wipe cache on this node
+     */
+    @RequestMapping(value = "/{entity}/{cacheKey}/{event}", method = { RequestMethod.PUT }, produces = { "application/json" })
+    @ResponseBody
+    public void wipeCache(@PathVariable String entity, @PathVariable String event, @PathVariable String cacheKey) throws IOException {
+        cacheService.notifyMetadataChange(entity, Broadcaster.Event.getEvent(event), cacheKey);
+    }
 
-        logger.info("wipe cache type: " + wipeType + " event:" + wipeEvent + " name:" + name);
+    /**
+     * If cacheKey has "/", will lead to this method.
+     */
+    @RequestMapping(value = "/{entity}/{event}", method = { RequestMethod.PUT }, produces = { "application/json" })
+    @ResponseBody
+    public void wipeCacheWithRequestBody(@PathVariable String entity, @PathVariable String event,
+            @RequestBody String cacheKey) throws IOException {
+        cacheService.notifyMetadataChange(entity, Broadcaster.Event.getEvent(event), cacheKey);
+    }
 
-        switch (wipeEvent) {
-        case CREATE:
-        case UPDATE:
-            cacheService.rebuildCache(wipeType, name);
-            break;
-        case DROP:
-            cacheService.removeCache(wipeType, name);
-            break;
-        default:
-            throw new RuntimeException("invalid type:" + wipeEvent);
-        }
+    @RequestMapping(value = "/announce/config", method = { RequestMethod.POST }, produces = { "application/json" })
+    public void hotLoadKylinConfig() throws IOException {
+        KylinConfig.getInstanceFromEnv().reloadFromSiteProperties();
+        cacheService.notifyMetadataChange(Broadcaster.SYNC_ALL, Broadcaster.Event.UPDATE, Broadcaster.SYNC_ALL);
+    }
+
+    @RequestMapping(value = "/migration", method = RequestMethod.POST)
+    @ResponseBody
+    public void clearCacheForCubeMigration(@RequestBody CubeMigrationRequest request) throws IOException {
+        cacheService.clearCacheForCubeMigration(request.getCube(), request.getProject(), request.getModel(), request.getTableToProjects());
+
+        cacheService.cleanDataCache(request.getProject());
     }
 
     public void setCacheService(CacheService cacheService) {

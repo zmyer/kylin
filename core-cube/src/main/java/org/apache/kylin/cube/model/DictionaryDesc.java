@@ -27,7 +27,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @JsonAutoDetect(fieldVisibility = Visibility.NONE, getterVisibility = Visibility.NONE, isGetterVisibility = Visibility.NONE, setterVisibility = Visibility.NONE)
-public class DictionaryDesc {
+public class DictionaryDesc implements java.io.Serializable {
 
     @JsonProperty("column")
     private String column;
@@ -46,11 +46,11 @@ public class DictionaryDesc {
         DataModelDesc model = cubeDesc.getModel();
 
         column = column.toUpperCase();
-        colRef = model.findColumn(column).getRef();
+        colRef = model.findColumn(column);
 
         if (reuseColumn != null) {
             reuseColumn = reuseColumn.toUpperCase();
-            reuseColRef = model.findColumn(reuseColumn).getRef();
+            reuseColRef = model.findColumn(reuseColumn);
         }
     }
 

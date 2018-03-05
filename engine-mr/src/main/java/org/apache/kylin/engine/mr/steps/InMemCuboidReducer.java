@@ -31,7 +31,7 @@ import org.apache.kylin.engine.mr.ByteArrayWritable;
 import org.apache.kylin.engine.mr.KylinReducer;
 import org.apache.kylin.engine.mr.common.AbstractHadoopJob;
 import org.apache.kylin.engine.mr.common.BatchConstants;
-import org.apache.kylin.measure.BufferedMeasureEncoder;
+import org.apache.kylin.measure.BufferedMeasureCodec;
 import org.apache.kylin.measure.MeasureAggregators;
 import org.apache.kylin.metadata.model.MeasureDesc;
 import org.slf4j.Logger;
@@ -43,18 +43,19 @@ public class InMemCuboidReducer extends KylinReducer<ByteArrayWritable, ByteArra
 
     private static final Logger logger = LoggerFactory.getLogger(InMemCuboidReducer.class);
 
-    private BufferedMeasureEncoder codec;
+    private BufferedMeasureCodec codec;
     private MeasureAggregators aggs;
 
-    private int counter;
     private Object[] input;
     private Object[] result;
+
+    private int vcounter;
 
     private Text outputKey;
     private Text outputValue;
 
     @Override
-    protected void setup(Context context) throws IOException {
+    protected void doSetup(Context context) throws IOException {
         super.bindCurrentConfiguration(context.getConfiguration());
         KylinConfig config = AbstractHadoopJob.loadKylinPropsAndMetadata();
 
@@ -63,7 +64,7 @@ public class InMemCuboidReducer extends KylinReducer<ByteArrayWritable, ByteArra
         CubeDesc cubeDesc = cube.getDescriptor();
 
         List<MeasureDesc> measuresDescs = cubeDesc.getMeasures();
-        codec = new BufferedMeasureEncoder(measuresDescs);
+        codec = new BufferedMeasureCodec(measuresDescs);
         aggs = new MeasureAggregators(measuresDescs);
         input = new Object[measuresDescs.size()];
         result = new Object[measuresDescs.size()];
@@ -73,11 +74,14 @@ public class InMemCuboidReducer extends KylinReducer<ByteArrayWritable, ByteArra
     }
 
     @Override
-    public void reduce(ByteArrayWritable key, Iterable<ByteArrayWritable> values, Context context) throws IOException, InterruptedException {
+    public void doReduce(ByteArrayWritable key, Iterable<ByteArrayWritable> values, Context context) throws IOException, InterruptedException {
 
         aggs.reset();
 
         for (ByteArrayWritable value : values) {
+            if (vcounter++ % BatchConstants.NORMAL_RECORD_LOG_THRESHOLD == 0) {
+                logger.info("Handling value with ordinal (This is not KV number!): " + vcounter);
+            }
             codec.decode(value.asBuffer(), input);
             aggs.aggregate(input);
         }
@@ -92,10 +96,6 @@ public class InMemCuboidReducer extends KylinReducer<ByteArrayWritable, ByteArra
 
         context.write(outputKey, outputValue);
 
-        counter++;
-        if (counter % BatchConstants.NORMAL_RECORD_LOG_THRESHOLD == 0) {
-            logger.info("Handled " + counter + " records!");
-        }
     }
 
 }

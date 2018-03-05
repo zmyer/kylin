@@ -27,6 +27,7 @@ import java.io.PrintWriter;
 import java.util.Set;
 
 import org.apache.kylin.common.util.Dictionary;
+import org.apache.kylin.common.util.HadoopUtil;
 import org.apache.kylin.common.util.JsonUtil;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
 import org.apache.kylin.cube.model.CubeDesc;
@@ -34,9 +35,8 @@ import org.apache.kylin.dict.DictionaryInfo;
 import org.apache.kylin.dict.DictionaryManager;
 import org.apache.kylin.dict.DistinctColumnValuesProvider;
 import org.apache.kylin.engine.mr.DFSFileTable;
-import org.apache.kylin.engine.mr.HadoopUtil;
 import org.apache.kylin.metadata.model.TblColRef;
-import org.apache.kylin.source.ReadableTable;
+import org.apache.kylin.source.IReadableTable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,10 +65,10 @@ public class ITDictionaryManagerTest extends LocalFileMetadataTestCase {
 
         MockDistinctColumnValuesProvider mockupData = new MockDistinctColumnValuesProvider("A", "B", "C");
 
-        DictionaryInfo info1 = dictMgr.buildDictionary(cubeDesc.getModel(), col, mockupData);
+        DictionaryInfo info1 = dictMgr.buildDictionary(col, mockupData.getDistinctValuesFor(col));
         System.out.println(JsonUtil.writeValueAsIndentString(info1));
 
-        DictionaryInfo info2 = dictMgr.buildDictionary(cubeDesc.getModel(), col, mockupData);
+        DictionaryInfo info2 = dictMgr.buildDictionary(col, mockupData.getDistinctValuesFor(col));
         System.out.println(JsonUtil.writeValueAsIndentString(info2));
 
         // test check duplicate
@@ -89,7 +89,7 @@ public class ITDictionaryManagerTest extends LocalFileMetadataTestCase {
 
         // test empty dictionary
         MockDistinctColumnValuesProvider mockupEmpty = new MockDistinctColumnValuesProvider();
-        DictionaryInfo info3 = dictMgr.buildDictionary(cubeDesc.getModel(), col, mockupEmpty);
+        DictionaryInfo info3 = dictMgr.buildDictionary(col, mockupEmpty.getDistinctValuesFor(col));
         System.out.println(JsonUtil.writeValueAsIndentString(info3));
         assertEquals(0, info3.getCardinality());
         assertEquals(0, info3.getDictionaryObject().getSize());
@@ -119,7 +119,7 @@ public class ITDictionaryManagerTest extends LocalFileMetadataTestCase {
         }
 
         @Override
-        public ReadableTable getDistinctValuesFor(TblColRef col) {
+        public IReadableTable getDistinctValuesFor(TblColRef col) {
             return new DFSFileTable(tmpFilePath, -1);
         }
 

@@ -18,107 +18,107 @@
 
 package org.apache.kylin.cube.model;
 
-import java.util.ArrayList;
+import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.kylin.common.util.BytesSplitter;
 import org.apache.kylin.cube.CubeSegment;
-import org.apache.kylin.cube.cuboid.Cuboid;
+import org.apache.kylin.metadata.MetadataConstants;
 import org.apache.kylin.metadata.model.DataModelDesc;
 import org.apache.kylin.metadata.model.FunctionDesc;
 import org.apache.kylin.metadata.model.IJoinedFlatTableDesc;
-import org.apache.kylin.metadata.model.JoinDesc;
+import org.apache.kylin.metadata.model.ISegment;
 import org.apache.kylin.metadata.model.MeasureDesc;
+import org.apache.kylin.metadata.model.SegmentRange;
 import org.apache.kylin.metadata.model.TblColRef;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 /**
  */
-public class CubeJoinedFlatTableDesc implements IJoinedFlatTableDesc {
+@SuppressWarnings("serial")
+public class CubeJoinedFlatTableDesc implements IJoinedFlatTableDesc, Serializable {
 
-    private String tableName;
-    private final CubeDesc cubeDesc;
-    private final CubeSegment cubeSegment;
+    protected final String tableName;
+    protected final CubeDesc cubeDesc;
+    protected final CubeSegment cubeSegment;
+    protected final boolean includingDerived;
 
-    private int columnCount;
-    private int[] rowKeyColumnIndexes; // the column index on flat table
-    private int[][] measureColumnIndexes; // [i] is the i.th measure related column index on flat table
-
+    private int columnCount = 0;
     private List<TblColRef> columnList = Lists.newArrayList();
-    private Map<TblColRef, Integer> columnIndexMap;
+    private Map<TblColRef, Integer> columnIndexMap = Maps.newHashMap();
 
-    private List<JoinDesc> cubeJoins;
-
-    
     public CubeJoinedFlatTableDesc(CubeDesc cubeDesc) {
-        this(cubeDesc, null);
+        this(cubeDesc, null, false);
     }
-    
+
+    public CubeJoinedFlatTableDesc(CubeDesc cubeDesc, boolean includingDerived) {
+        this(cubeDesc, null, includingDerived);
+    }
+
     public CubeJoinedFlatTableDesc(CubeSegment cubeSegment) {
-        this(cubeSegment.getCubeDesc(), cubeSegment);
+        this(cubeSegment.getCubeDesc(), cubeSegment, false);
+    }
+
+    public CubeJoinedFlatTableDesc(CubeSegment cubeSegment, boolean includingDerived) {
+        this(cubeSegment.getCubeDesc(), cubeSegment, includingDerived);
     }
     
-    private CubeJoinedFlatTableDesc(CubeDesc cubeDesc, CubeSegment cubeSegment /* can be null */) {
+    private CubeJoinedFlatTableDesc(CubeDesc cubeDesc, CubeSegment cubeSegment /* can be null */,
+            boolean includingDerived) {
         this.cubeDesc = cubeDesc;
         this.cubeSegment = cubeSegment;
-        this.columnIndexMap = Maps.newHashMap();
-        this.cubeJoins = new ArrayList<JoinDesc>(cubeDesc.getDimensions().size());
-        parseCubeDesc();
+
+        this.tableName = makeTableName(cubeDesc, cubeSegment);
+        this.includingDerived = includingDerived;
+        initParseCubeDesc();
+    }
+
+    protected String makeTableName(CubeDesc cubeDesc, CubeSegment cubeSegment) {
+        if (cubeSegment == null) {
+            return MetadataConstants.KYLIN_INTERMEDIATE_PREFIX + cubeDesc.getName().toLowerCase();
+        } else {
+            return MetadataConstants.KYLIN_INTERMEDIATE_PREFIX + cubeDesc.getName().toLowerCase() + "_"
+                    + cubeSegment.getUuid().replaceAll("-", "_");
+        }
+    }
+
+    protected final void initAddColumn(TblColRef col) {
+        if (columnIndexMap.containsKey(col))
+            return;
+
+        int columnIndex = columnIndexMap.size();
+        columnIndexMap.put(col, columnIndex);
+        columnList.add(col);
+        columnCount = columnIndexMap.size();
+
+        Preconditions.checkState(columnIndexMap.size() == columnList.size());
     }
 
     // check what columns from hive tables are required, and index them
-    private void parseCubeDesc() {
-        long baseCuboidId = Cuboid.getBaseCuboidId(cubeDesc);
-        Cuboid baseCuboid = Cuboid.findById(cubeDesc, baseCuboidId);
-
-        if (cubeSegment == null) {
-            this.tableName = "kylin_intermediate_" + cubeDesc.getName();
-        } else {
-            this.tableName = "kylin_intermediate_" + cubeDesc.getName() + "_" + cubeSegment.getUuid().replaceAll("-", "_");
-        }
-
-        int columnIndex = 0;
-        for (TblColRef col : cubeDesc.listDimensionColumnsExcludingDerived(false)) {
-            columnIndexMap.put(col, columnIndex);
-            columnList.add(col);
-            columnIndex++;
-        }
-
-        // build index for rowkey columns
-        List<TblColRef> cuboidColumns = baseCuboid.getColumns();
-        int rowkeyColCount = cubeDesc.getRowkey().getRowKeyColumns().length;
-        rowKeyColumnIndexes = new int[rowkeyColCount];
-        for (int i = 0; i < rowkeyColCount; i++) {
-            TblColRef col = cuboidColumns.get(i);
-            Integer dimIdx = columnIndexMap.get(col);
-            if (dimIdx == null) {
-                throw new RuntimeException("Can't find column " + col);
+    protected void initParseCubeDesc() {
+        if (this.includingDerived) {
+            for (TblColRef col : cubeDesc.listDimensionColumnsIncludingDerived()) {
+                initAddColumn(col);
             }
-            rowKeyColumnIndexes[i] = dimIdx;
+        } else {
+            for (TblColRef col : cubeDesc.listDimensionColumnsExcludingDerived(false)) {
+                initAddColumn(col);
+            }
         }
 
         List<MeasureDesc> measures = cubeDesc.getMeasures();
         int measureSize = measures.size();
-        measureColumnIndexes = new int[measureSize][];
         for (int i = 0; i < measureSize; i++) {
             FunctionDesc func = measures.get(i).getFunction();
             List<TblColRef> colRefs = func.getParameter().getColRefs();
-            if (colRefs == null) {
-                measureColumnIndexes[i] = null;
-            } else {
-                measureColumnIndexes[i] = new int[colRefs.size()];
+            if (colRefs != null) {
                 for (int j = 0; j < colRefs.size(); j++) {
                     TblColRef c = colRefs.get(j);
-                    measureColumnIndexes[i][j] = columnList.indexOf(c);
-                    if (measureColumnIndexes[i][j] < 0) {
-                        measureColumnIndexes[i][j] = columnIndex;
-                        columnIndexMap.put(c, columnIndex);
-                        columnList.add(c);
-                        columnIndex++;
-                    }
+                    initAddColumn(c);
                 }
             }
         }
@@ -126,27 +126,11 @@ public class CubeJoinedFlatTableDesc implements IJoinedFlatTableDesc {
         if (cubeDesc.getDictionaries() != null) {
             for (DictionaryDesc dictDesc : cubeDesc.getDictionaries()) {
                 TblColRef c = dictDesc.getColumnRef();
-                if (columnList.indexOf(c) < 0) {
-                    columnIndexMap.put(c, columnIndex);
-                    columnList.add(c);
-                    columnIndex++;
-                }
+                initAddColumn(c);
                 if (dictDesc.getResuseColumnRef() != null) {
                     c = dictDesc.getResuseColumnRef();
-                    if (columnList.indexOf(c) < 0) {
-                        columnIndexMap.put(c, columnIndex);
-                        columnList.add(c);
-                        columnIndex++;
-                    }
+                    initAddColumn(c);
                 }
-            }
-        }
-
-        columnCount = columnIndex;
-
-        for (DimensionDesc d : cubeDesc.getDimensions()) {
-            if (d.getJoin() != null) {
-                cubeJoins.add(d.getJoin());
             }
         }
     }
@@ -154,22 +138,11 @@ public class CubeJoinedFlatTableDesc implements IJoinedFlatTableDesc {
     // sanity check the input record (in bytes) matches what's expected
     public void sanityCheck(BytesSplitter bytesSplitter) {
         if (columnCount != bytesSplitter.getBufferSize()) {
-            throw new IllegalArgumentException("Expect " + columnCount + " columns, but see " + bytesSplitter.getBufferSize() + " -- " + bytesSplitter);
+            throw new IllegalArgumentException("Expect " + columnCount + " columns, but see "
+                    + bytesSplitter.getBufferSize() + " -- " + bytesSplitter);
         }
 
         // TODO: check data types here
-    }
-
-    public CubeDesc getCubeDesc() {
-        return cubeDesc;
-    }
-
-    public int[] getRowKeyColumnIndexes() {
-        return rowKeyColumnIndexes;
-    }
-
-    public int[][] getMeasureColumnIndexes() {
-        return measureColumnIndexes;
     }
 
     @Override
@@ -187,32 +160,33 @@ public class CubeJoinedFlatTableDesc implements IJoinedFlatTableDesc {
         return cubeDesc.getModel();
     }
 
-    private static String colName(String canonicalColName) {
-        return canonicalColName.replace(".", "_");
-    }
-
+    @Override
     public int getColumnIndex(TblColRef colRef) {
-        String key = colName(colRef.getCanonicalName());
-        Integer index = columnIndexMap.get(key);
+        Integer index = columnIndexMap.get(colRef);
         if (index == null)
-            throw new IllegalArgumentException("Column " + colRef.toString() + " wasn't found on flat table.");
+            return -1;
 
         return index.intValue();
     }
 
     @Override
-    public long getSourceOffsetStart() {
-        return cubeSegment.getSourceOffsetStart();
-    }
-
-    @Override
-    public long getSourceOffsetEnd() {
-        return cubeSegment.getSourceOffsetEnd();
+    public SegmentRange getSegRange() {
+        return cubeSegment.getSegRange();
     }
 
     @Override
     public TblColRef getDistributedBy() {
         return cubeDesc.getDistributedByColumn();
+    }
+
+    @Override
+    public ISegment getSegment() {
+        return cubeSegment;
+    }
+
+    @Override
+    public TblColRef getClusterBy() {
+        return cubeDesc.getClusteredByColumn();
     }
 
 }

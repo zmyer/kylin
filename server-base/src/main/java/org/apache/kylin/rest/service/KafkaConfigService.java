@@ -22,20 +22,19 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.kylin.rest.constant.Constant;
-import org.apache.kylin.rest.exception.InternalErrorException;
+import org.apache.kylin.rest.exception.BadRequestException;
+import org.apache.kylin.rest.msg.Message;
+import org.apache.kylin.rest.msg.MsgPicker;
+import org.apache.kylin.rest.util.AclEvaluate;
 import org.apache.kylin.source.kafka.config.KafkaConfig;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.access.prepost.PostFilter;
 import org.springframework.stereotype.Component;
 
 @Component("kafkaMgmtService")
 public class KafkaConfigService extends BasicService {
-
     @Autowired
-    private AccessService accessService;
+    private AclEvaluate aclEvaluate;
 
-    @PostFilter(Constant.ACCESS_POST_FILTER_READ)
     public List<KafkaConfig> listAllKafkaConfigs(final String kafkaConfigName) throws IOException {
         List<KafkaConfig> kafkaConfigs = new ArrayList<KafkaConfig>();
         //        CubeInstance cubeInstance = (null != cubeName) ? getCubeManager().getCube(cubeName) : null;
@@ -53,8 +52,8 @@ public class KafkaConfigService extends BasicService {
         return kafkaConfigs;
     }
 
-    public List<KafkaConfig> getKafkaConfigs(final String kafkaConfigName, final Integer limit, final Integer offset) throws IOException {
-
+    public List<KafkaConfig> getKafkaConfigs(final String kafkaConfigName, final String project, final Integer limit, final Integer offset) throws IOException {
+        aclEvaluate.checkProjectWritePermission(project);
         List<KafkaConfig> kafkaConfigs;
         kafkaConfigs = listAllKafkaConfigs(kafkaConfigName);
 
@@ -69,25 +68,29 @@ public class KafkaConfigService extends BasicService {
         return kafkaConfigs.subList(offset, offset + limit);
     }
 
-    public KafkaConfig createKafkaConfig(KafkaConfig config) throws IOException {
+    public KafkaConfig createKafkaConfig(KafkaConfig config, String project) throws IOException {
+        aclEvaluate.checkProjectAdminPermission(project);
+        Message msg = MsgPicker.getMsg();
+
         if (getKafkaManager().getKafkaConfig(config.getName()) != null) {
-            throw new InternalErrorException("The kafkaConfig named " + config.getName() + " already exists");
+            throw new BadRequestException(String.format(msg.getKAFKA_CONFIG_ALREADY_EXIST(), config.getName()));
         }
-        getKafkaManager().createKafkaConfig(config.getName(), config);
+        getKafkaManager().createKafkaConfig(config);
         return config;
     }
 
-    //    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#desc, 'ADMINISTRATION') or hasPermission(#desc, 'MANAGEMENT')")
-    public KafkaConfig updateKafkaConfig(KafkaConfig config) throws IOException {
+    public KafkaConfig updateKafkaConfig(KafkaConfig config, String project) throws IOException {
+        aclEvaluate.checkProjectAdminPermission(project);
         return getKafkaManager().updateKafkaConfig(config);
     }
 
-    public KafkaConfig getKafkaConfig(String configName) throws IOException {
+    public KafkaConfig getKafkaConfig(String configName, String project) throws IOException {
+        aclEvaluate.checkProjectWritePermission(project);
         return getKafkaManager().getKafkaConfig(configName);
     }
 
-    //    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#desc, 'ADMINISTRATION') or hasPermission(#desc, 'MANAGEMENT')")
-    public void dropKafkaConfig(KafkaConfig config) throws IOException {
+    public void dropKafkaConfig(KafkaConfig config, String project) throws IOException {
+        aclEvaluate.checkProjectAdminPermission(project);
         getKafkaManager().removeKafkaConfig(config);
     }
 }

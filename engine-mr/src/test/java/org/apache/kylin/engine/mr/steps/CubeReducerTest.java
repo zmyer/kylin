@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.io.Text;
@@ -36,11 +37,10 @@ import org.apache.kylin.common.util.LocalFileMetadataTestCase;
 import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.cube.model.CubeDesc;
 import org.apache.kylin.engine.mr.common.BatchConstants;
-import org.apache.kylin.measure.BufferedMeasureEncoder;
+import org.apache.kylin.measure.BufferedMeasureCodec;
 import org.apache.kylin.measure.MeasureAggregator;
 import org.apache.kylin.measure.MeasureIngester;
 import org.apache.kylin.measure.MeasureType;
-import org.apache.kylin.metadata.datatype.LongMutable;
 import org.apache.kylin.metadata.model.FunctionDesc;
 import org.apache.kylin.metadata.model.MeasureDesc;
 import org.junit.After;
@@ -60,7 +60,7 @@ public class CubeReducerTest extends LocalFileMetadataTestCase {
 
         // hack for distributed cache
         FileUtils.deleteDirectory(new File("../job/meta"));
-        FileUtils.copyDirectory(new File(getTestConfig().getMetadataUrl()), new File("../job/meta"));
+        FileUtils.copyDirectory(new File(getTestConfig().getMetadataUrl().toString()), new File("../job/meta"));
 
         CuboidReducer reducer = new CuboidReducer();
         reduceDriver = ReduceDriver.newReduceDriver(reducer);
@@ -78,7 +78,7 @@ public class CubeReducerTest extends LocalFileMetadataTestCase {
         reduceDriver.getConfiguration().set(BatchConstants.CFG_CUBE_NAME, "test_kylin_cube_with_slr_ready");
 
         CubeDesc cubeDesc = CubeManager.getInstance(getTestConfig()).getCube("test_kylin_cube_with_slr_ready").getDescriptor();
-        BufferedMeasureEncoder codec = new BufferedMeasureEncoder(cubeDesc.getMeasures());
+        BufferedMeasureCodec codec = new BufferedMeasureCodec(cubeDesc.getMeasures());
 
         Text key1 = new Text("72010ustech");
         List<Text> values1 = new ArrayList<Text>();
@@ -125,7 +125,7 @@ public class CubeReducerTest extends LocalFileMetadataTestCase {
         MeasureType origMeasureType = functionDesc.getMeasureType();
         field.set(functionDesc, new MockUpMeasureType(origMeasureType));
 
-        BufferedMeasureEncoder codec = new BufferedMeasureEncoder(cubeDesc.getMeasures());
+        BufferedMeasureCodec codec = new BufferedMeasureCodec(cubeDesc.getMeasures());
 
         Text key1 = new Text("72010ustech");
         List<Text> values1 = new ArrayList<Text>();
@@ -159,8 +159,8 @@ public class CubeReducerTest extends LocalFileMetadataTestCase {
         assertTrue(result.contains(p3));
     }
 
-    private Text newValueText(BufferedMeasureEncoder codec, String sum, String min, String max, int count, int item_count) {
-        Object[] values = new Object[] { new BigDecimal(sum), new BigDecimal(min), new BigDecimal(max), new LongMutable(count), new LongMutable(item_count) };
+    private Text newValueText(BufferedMeasureCodec codec, String sum, String min, String max, int count, int item_count) {
+        Object[] values = new Object[] { new BigDecimal(sum), new BigDecimal(min), new BigDecimal(max), new Long(count), new Long(item_count) };
 
         ByteBuffer buf = codec.encode(values);
 
@@ -197,8 +197,8 @@ public class CubeReducerTest extends LocalFileMetadataTestCase {
         }
 
         @Override
-        public Class<?> getRewriteCalciteAggrFunctionClass() {
-            return origMeasureType.getRewriteCalciteAggrFunctionClass();
+        public Map<String, Class<?>> getRewriteCalciteAggrFunctions() {
+            return origMeasureType.getRewriteCalciteAggrFunctions();
         }
     }
 }

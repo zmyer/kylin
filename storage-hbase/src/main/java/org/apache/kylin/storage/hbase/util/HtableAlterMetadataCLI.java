@@ -23,10 +23,11 @@ import java.io.IOException;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.TableName;
-import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.Admin;
+import org.apache.hadoop.hbase.client.Connection;
+import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.AbstractApplication;
 import org.apache.kylin.common.util.OptionsHelper;
 import org.apache.kylin.engine.mr.common.BatchConstants;
@@ -50,15 +51,22 @@ public class HtableAlterMetadataCLI extends AbstractApplication {
     String metadataValue;
 
     private void alter() throws IOException {
-        Configuration conf = HBaseConnection.getCurrentHBaseConfiguration();
-        HBaseAdmin hbaseAdmin = new HBaseAdmin(conf);
-        HTableDescriptor table = hbaseAdmin.getTableDescriptor(TableName.valueOf(tableName));
+        Connection conn = HBaseConnection.get(KylinConfig.getInstanceFromEnv().getStorageUrl());
+        Admin hbaseAdmin = null;
 
-        hbaseAdmin.disableTable(table.getTableName());
-        table.setValue(metadataKey, metadataValue);
-        hbaseAdmin.modifyTable(table.getTableName(), table);
-        hbaseAdmin.enableTable(table.getTableName());
-        hbaseAdmin.close();
+        try {
+            hbaseAdmin = conn.getAdmin();
+            HTableDescriptor table = hbaseAdmin.getTableDescriptor(TableName.valueOf(tableName));
+
+            hbaseAdmin.disableTable(table.getTableName());
+            table.setValue(metadataKey, metadataValue);
+            hbaseAdmin.modifyTable(table.getTableName(), table);
+            hbaseAdmin.enableTable(table.getTableName());
+        } finally {
+            if (hbaseAdmin != null) {
+                hbaseAdmin.close();
+            }
+        }
     }
 
     public static void main(String[] args) throws Exception {

@@ -20,14 +20,21 @@ package org.apache.kylin.metadata.model;
 
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
 
 import org.apache.kylin.common.persistence.ResourceStore;
 import org.apache.kylin.common.persistence.RootPersistentEntity;
+import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.common.util.StringSplitter;
+import org.apache.kylin.metadata.MetadataConstants;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.Lists;
 
 /**
  * Table Metadata from Source. All name should be uppercase.
@@ -35,8 +42,48 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
 @SuppressWarnings("serial")
 @JsonAutoDetect(fieldVisibility = Visibility.NONE, getterVisibility = Visibility.NONE, isGetterVisibility = Visibility.NONE, setterVisibility = Visibility.NONE)
 public class TableDesc extends RootPersistentEntity implements ISourceAware {
+    @SuppressWarnings("unused")
+    private static final Logger logger = LoggerFactory.getLogger(TableDesc.class);
 
-    public static final String TABLE_TYPE_VIRTUAL_VIEW = "VIRTUAL_VIEW";
+    private static final String TABLE_TYPE_VIRTUAL_VIEW = "VIRTUAL_VIEW";
+
+    public static String concatRawResourcePath(String nameOnPath) {
+        return ResourceStore.TABLE_RESOURCE_ROOT + "/" + nameOnPath + ".json";
+    }
+    
+    public static String makeResourceName(String tableIdentity, String prj) {
+        return prj == null ? tableIdentity : tableIdentity + "--" + prj;
+    }
+
+    // this method should only used for getting dest path when copying from src to dest.
+    // if you want to get table's src path, use getResourcePath() instead.
+    public static String concatResourcePath(String tableIdentity, String prj) {
+        return concatRawResourcePath(makeResourceName(tableIdentity, prj));
+    }
+
+    // returns <table, project>
+    public static Pair<String, String> parseResourcePath(String path) {
+        if (path.endsWith(".json"))
+            path = path.substring(0, path.length() - ".json".length());
+
+        int cut = path.lastIndexOf("/");
+        if (cut >= 0)
+            path = path.substring(cut + 1);
+
+        String table, prj;
+        int dash = path.indexOf("--");
+        if (dash >= 0) {
+            table = path.substring(0, dash);
+            prj = path.substring(dash + 2);
+        } else {
+            table = path;
+            prj = null;
+        }
+        return Pair.newPair(table, prj);
+    }
+
+    // ============================================================================
+
     @JsonProperty("name")
     private String name;
     @JsonProperty("columns")
@@ -46,20 +93,81 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
     @JsonProperty("table_type")
     private String tableType;
 
-    private static final String materializedTableNamePrefix = "kylin_intermediate_";
+    @JsonProperty("data_gen")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String dataGen;
 
+    private String project;
     private DatabaseDesc database = new DatabaseDesc();
-
     private String identity = null;
+    private boolean isBorrowedFromGlobal = false;
 
     public TableDesc() {
     }
 
     public TableDesc(TableDesc other) {
-        this.name = other.getName();
-        this.columns = other.getColumns();
+        this.uuid = other.uuid;
+        this.lastModified = other.lastModified;
+
+        this.name = other.name;
+        this.sourceType = other.sourceType;
+        this.tableType = other.tableType;
+        this.dataGen = other.dataGen;
+
+        this.columns = new ColumnDesc[other.columns.length];
+        for (int i = 0; i < other.columns.length; i++) {
+            this.columns[i] = new ColumnDesc(other.columns[i]);
+            this.columns[i].init(this);
+        }
+
+        this.project = other.project;
         this.database.setName(other.getDatabase());
-        this.tableType = other.getTableType();
+        this.identity = other.identity;
+    }
+
+    @Override
+    public String resourceName() {
+        return makeResourceName(getIdentity(), getProject());
+    }
+    
+    public TableDesc appendColumns(ColumnDesc[] computedColumns, boolean makeCopy) {
+        if (computedColumns == null || computedColumns.length == 0) {
+            return this;
+        }
+
+        TableDesc ret = makeCopy ? new TableDesc(this) : this;
+        ColumnDesc[] existingColumns = ret.columns;
+        List<ColumnDesc> newColumns = Lists.newArrayList();
+
+        for (int j = 0; j < computedColumns.length; j++) {
+
+            //check name conflict
+            boolean isFreshCC = true;
+            for (int i = 0; i < existingColumns.length; i++) {
+                if (existingColumns[i].getName().equalsIgnoreCase(computedColumns[j].getName())) {
+                    // if we're adding a computed column twice, it should be allowed without producing duplicates
+                    if (!existingColumns[i].isComputedColumn()) {
+                        throw new IllegalArgumentException(String.format(
+                                "There is already a column named %s on table %s, please change your computed column name",
+                                new Object[] { computedColumns[j].getName(), this.getIdentity() }));
+                    } else {
+                        isFreshCC = false;
+                    }
+                }
+            }
+
+            if (isFreshCC) {
+                newColumns.add(computedColumns[j]);
+            }
+        }
+
+        List<ColumnDesc> expandedColumns = Lists.newArrayList(existingColumns);
+        for (ColumnDesc newColumnDesc : newColumns) {
+            newColumnDesc.init(ret);
+            expandedColumns.add(newColumnDesc);
+        }
+        ret.columns = expandedColumns.toArray(new ColumnDesc[0]);
+        return ret;
     }
 
     public ColumnDesc findColumnByName(String name) {
@@ -79,7 +187,11 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
     }
 
     public String getResourcePath() {
-        return concatResourcePath(getIdentity());
+        if (isBorrowedFromGlobal()) {
+            return concatResourcePath(getIdentity(), null);
+        }
+        
+        return concatResourcePath(getIdentity(), project);
     }
 
     /**
@@ -87,7 +199,7 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
      * @return
      */
     public String getResourcePathV1() {
-        return concatResourcePath(name);
+        return concatResourcePath(name, null);
     }
 
     public String getIdentity() {
@@ -97,15 +209,25 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
         return identity;
     }
 
-    public static String concatResourcePath(String tableIdentity) {
-        return ResourceStore.TABLE_RESOURCE_ROOT + "/" + tableIdentity + ".json";
+    public boolean isView() {
+        return TABLE_TYPE_VIRTUAL_VIEW.equals(tableType);
     }
 
-    public static String concatExdResourcePath(String tableIdentity) {
-        return ResourceStore.TABLE_EXD_RESOURCE_ROOT + "/" + tableIdentity + ".json";
+    public boolean isBorrowedFromGlobal() {
+        return isBorrowedFromGlobal;
     }
 
-    // ============================================================================
+    public void setBorrowedFromGlobal(boolean borrowedFromGlobal) {
+        isBorrowedFromGlobal = borrowedFromGlobal;
+    }
+
+    public String getProject() {
+        return project;
+    }
+
+    public void setProject(String project) {
+        this.project = project;
+    }
 
     public String getName() {
         return this.name;
@@ -121,7 +243,7 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
                 this.name = splits[0];
             }
         } else {
-            this.name = name;
+            this.name = null;
         }
     }
 
@@ -144,7 +266,12 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
     }
 
     public int getMaxColumnIndex() {
+        if (columns == null) {
+            return -1;
+        }
+
         int max = -1;
+
         for (ColumnDesc col : columns) {
             int idx = col.getZeroBasedIndex();
             max = Math.max(max, idx);
@@ -156,7 +283,13 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
         return getMaxColumnIndex() + 1;
     }
 
-    public void init() {
+    public String getDataGen() {
+        return dataGen;
+    }
+
+    public void init(String project) {
+        this.project = project;
+
         if (name != null)
             name = name.toUpperCase();
 
@@ -211,19 +344,20 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
             return false;
         if (!Arrays.equals(columns, tableDesc.columns))
             return false;
-        //        if (tableType != null ? !tableType.equals(tableDesc.tableType) : tableDesc.tableType != null)
-        //            return false;
+
         return getIdentity().equals(tableDesc.getIdentity());
 
     }
 
     public String getMaterializedName() {
-        return materializedTableNamePrefix + database.getName() + "_" + name;
+        return MetadataConstants.KYLIN_INTERMEDIATE_PREFIX + database.getName() + "_" + name;
     }
 
     @Override
     public String toString() {
-        return "TableDesc{" + "name='" + name + '\'' + ", columns=" + Arrays.toString(columns) + ", sourceType=" + sourceType + ", tableType='" + tableType + '\'' + ", database=" + database + ", identity='" + getIdentity() + '\'' + '}';
+        return "TableDesc{" + "name='" + name + '\'' + ", columns=" + Arrays.toString(columns) + ", sourceType="
+                + sourceType + ", tableType='" + tableType + '\'' + ", database=" + database + ", identity='"
+                + getIdentity() + '\'' + '}';
     }
 
     /** create a mockup table for unit test */

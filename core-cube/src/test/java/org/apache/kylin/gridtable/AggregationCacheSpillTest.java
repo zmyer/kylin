@@ -28,7 +28,6 @@ import java.util.List;
 
 import org.apache.kylin.common.util.ImmutableBitSet;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
-import org.apache.kylin.metadata.datatype.LongMutable;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -48,7 +47,6 @@ public class AggregationCacheSpillTest extends LocalFileMetadataTestCase {
     @BeforeClass
     public static void beforeClass() {
         staticCreateTestMetadata();
-        System.setProperty("log4j.configuration", "kylin-log4j.properties");
 
         INFO = UnitTestSupport.hllInfo();
         final List<GTRecord> data = UnitTestSupport.mockupHllData(INFO, DATA_CARDINALITY);
@@ -70,11 +68,6 @@ public class AggregationCacheSpillTest extends LocalFileMetadataTestCase {
             }
 
             @Override
-            public long getScannedRowCount() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public void close() throws IOException {
             }
 
@@ -84,16 +77,15 @@ public class AggregationCacheSpillTest extends LocalFileMetadataTestCase {
             }
         };
 
-        GTScanRequest scanRequest = new GTScanRequestBuilder().setInfo(INFO).setRanges(null).setDimensions(new ImmutableBitSet(0, 3)).setAggrGroupBy(new ImmutableBitSet(0, 3)).setAggrMetrics(new ImmutableBitSet(3, 6)).setAggrMetricsFuncs(new String[] { "SUM", "SUM", "COUNT_DISTINCT" }).setFilterPushDown(null).createGTScanRequest();
-        scanRequest.setAggCacheMemThreshold(0.5);
+        GTScanRequest scanRequest = new GTScanRequestBuilder().setInfo(INFO).setRanges(null).setDimensions(new ImmutableBitSet(0, 3)).setAggrGroupBy(new ImmutableBitSet(0, 3)).setAggrMetrics(new ImmutableBitSet(3, 6)).setAggrMetricsFuncs(new String[] { "SUM", "SUM", "COUNT_DISTINCT" }).setFilterPushDown(null).setAggCacheMemThreshold(0.5).createGTScanRequest();
 
-        GTAggregateScanner scanner = new GTAggregateScanner(inputScanner, scanRequest, Long.MAX_VALUE);
+        GTAggregateScanner scanner = new GTAggregateScanner(inputScanner, scanRequest);
 
         int count = 0;
         for (GTRecord record : scanner) {
             assertNotNull(record);
             Object[] returnRecord = record.getValues();
-            assertEquals(20, ((LongMutable) returnRecord[3]).get());
+            assertEquals(20, ((Long) returnRecord[3]).longValue());
             assertEquals(21, ((BigDecimal) returnRecord[4]).longValue());
             count++;
 
@@ -112,11 +104,6 @@ public class AggregationCacheSpillTest extends LocalFileMetadataTestCase {
             }
 
             @Override
-            public long getScannedRowCount() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public void close() throws IOException {
             }
 
@@ -127,16 +114,15 @@ public class AggregationCacheSpillTest extends LocalFileMetadataTestCase {
         };
 
         // all-in-mem testcase
-        GTScanRequest scanRequest = new GTScanRequestBuilder().setInfo(INFO).setRanges(null).setDimensions(new ImmutableBitSet(0, 3)).setAggrGroupBy(new ImmutableBitSet(1, 3)).setAggrMetrics(new ImmutableBitSet(3, 6)).setAggrMetricsFuncs(new String[] { "SUM", "SUM", "COUNT_DISTINCT" }).setFilterPushDown(null).createGTScanRequest();
-        scanRequest.setAggCacheMemThreshold(0.5);
+        GTScanRequest scanRequest = new GTScanRequestBuilder().setInfo(INFO).setRanges(null).setDimensions(new ImmutableBitSet(0, 3)).setAggrGroupBy(new ImmutableBitSet(1, 3)).setAggrMetrics(new ImmutableBitSet(3, 6)).setAggrMetricsFuncs(new String[] { "SUM", "SUM", "COUNT_DISTINCT" }).setFilterPushDown(null).setAggCacheMemThreshold(0.5).createGTScanRequest();
 
-        GTAggregateScanner scanner = new GTAggregateScanner(inputScanner, scanRequest, Long.MAX_VALUE);
+        GTAggregateScanner scanner = new GTAggregateScanner(inputScanner, scanRequest);
 
         int count = 0;
         for (GTRecord record : scanner) {
             assertNotNull(record);
             Object[] returnRecord = record.getValues();
-            assertEquals(80000, ((LongMutable) returnRecord[3]).get());
+            assertEquals(80000, ((Long) returnRecord[3]).longValue());
             assertEquals(84000, ((BigDecimal) returnRecord[4]).longValue());
             count++;
 

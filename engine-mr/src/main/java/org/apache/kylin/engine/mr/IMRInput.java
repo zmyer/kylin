@@ -18,13 +18,16 @@
 
 package org.apache.kylin.engine.mr;
 
+import java.util.Collection;
+
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.kylin.job.execution.DefaultChainedExecutable;
 import org.apache.kylin.metadata.model.IJoinedFlatTableDesc;
+import org.apache.kylin.metadata.model.ISegment;
 import org.apache.kylin.metadata.model.TableDesc;
 
 /**
- * Any ITableSource that wishes to serve as input of MapReduce build engine must adapt to this interface.
+ * Any ISource that wishes to serve as input of MapReduce build engine must adapt to this interface.
  */
 public interface IMRInput {
 
@@ -33,6 +36,9 @@ public interface IMRInput {
 
     /** Return an InputFormat that reads from specified table. */
     public IMRTableInputFormat getTableInputFormat(TableDesc table);
+
+    /** Return a helper to participate in batch cubing merge job flow. */
+    public IMRBatchMergeInputSide getBatchMergeInputSide(ISegment seg);
 
     /**
      * Utility that configures mapper to read from a table.
@@ -43,7 +49,7 @@ public interface IMRInput {
         public void configureJob(Job job);
 
         /** Parse a mapper input object into column values. */
-        public String[] parseMapperInput(Object mapperInput);
+        public Collection<String[]> parseMapperInput(Object mapperInput);
     }
 
     /**
@@ -67,4 +73,10 @@ public interface IMRInput {
         public void addStepPhase4_Cleanup(DefaultChainedExecutable jobFlow);
     }
 
+    public interface IMRBatchMergeInputSide {
+
+        /** Add step that executes before merge dictionary and before merge cube. */
+        public void addStepPhase1_MergeDictionary(DefaultChainedExecutable jobFlow);
+
+    }
 }

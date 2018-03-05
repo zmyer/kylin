@@ -19,7 +19,6 @@
 package org.apache.kylin.cube.inmemcubing;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -31,10 +30,14 @@ import org.apache.kylin.common.util.Dictionary;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
+import org.apache.kylin.engine.EngineFactory;
 import org.apache.kylin.gridtable.GTRecord;
+import org.apache.kylin.metadata.MetadataConstants;
+import org.apache.kylin.metadata.model.IJoinedFlatTableDesc;
 import org.apache.kylin.metadata.model.TblColRef;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +45,7 @@ import org.slf4j.LoggerFactory;
 /**
  * very time consuming
  */
+@Ignore("to save CI time")
 public class ITDoggedCubeBuilderStressTest extends LocalFileMetadataTestCase {
 
     @SuppressWarnings("unused")
@@ -62,8 +66,9 @@ public class ITDoggedCubeBuilderStressTest extends LocalFileMetadataTestCase {
         KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
         CubeManager cubeManager = CubeManager.getInstance(kylinConfig);
 
-        cube = cubeManager.getCube("test_kylin_cube_without_slr_left_join_empty");
-        flatTable = LOCALMETA_TEST_DATA + "/data/flatten_data_for_without_slr_left_join.csv";
+        cube = cubeManager.getCube("ssb");
+        flatTable = LOCALMETA_TEST_DATA + "/data/" + MetadataConstants.KYLIN_INTERMEDIATE_PREFIX
+                + "ssb_19920101000000_19920201000000.csv";
         dictionaryMap = ITInMemCubeBuilderTest.getDictionaryMap(cube, flatTable);
     }
 
@@ -75,11 +80,12 @@ public class ITDoggedCubeBuilderStressTest extends LocalFileMetadataTestCase {
     @Test
     public void test() throws Exception {
 
-        ArrayBlockingQueue<List<String>> queue = new ArrayBlockingQueue<List<String>>(1000);
+        ArrayBlockingQueue<String[]> queue = new ArrayBlockingQueue<String[]>(1000);
         ExecutorService executorService = Executors.newSingleThreadExecutor();
         long randSeed = System.currentTimeMillis();
 
-        DoggedCubeBuilder doggedBuilder = new DoggedCubeBuilder(cube.getDescriptor(), dictionaryMap);
+        IJoinedFlatTableDesc flatDesc = EngineFactory.getJoinedFlatTableDesc(cube.getDescriptor());
+        DoggedCubeBuilder doggedBuilder = new DoggedCubeBuilder(cube.getCuboidScheduler(), flatDesc, dictionaryMap);
         doggedBuilder.setConcurrentThreads(THREADS);
 
         {

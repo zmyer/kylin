@@ -21,13 +21,18 @@ package org.apache.kylin.rest.service;
 import java.io.IOException;
 import java.sql.SQLException;
 
+import org.apache.kylin.common.QueryContext;
+import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.common.QueryContextFacade;
 import org.apache.kylin.job.exception.JobException;
 import org.apache.kylin.metadata.project.ProjectInstance;
+import org.apache.kylin.query.QueryConnection;
 import org.apache.kylin.rest.request.SQLRequest;
 import org.apache.kylin.rest.response.SQLResponse;
 import org.junit.Assert;
 import org.junit.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * @author xduo
@@ -35,17 +40,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 public class QueryServiceTest extends ServiceTestBase {
 
     @Autowired
+    @Qualifier("queryService")
     QueryService queryService;
 
     @Autowired
+    @Qualifier("cacheService")
     private CacheService cacheService;
 
     @Test
     public void testBasics() throws JobException, IOException, SQLException {
         Assert.assertNotNull(queryService.getConfig());
         Assert.assertNotNull(queryService.getConfig());
-        Assert.assertNotNull(queryService.getMetadataManager());
-        Assert.assertNotNull(cacheService.getOLAPDataSource(ProjectInstance.DEFAULT_PROJECT_NAME));
+        Assert.assertNotNull(queryService.getDataModelManager());
+        Assert.assertNotNull(QueryConnection.getConnection(ProjectInstance.DEFAULT_PROJECT_NAME));
 
         //        Assert.assertTrue(queryService.getQueries("ADMIN").size() == 0);
         //
@@ -58,8 +65,35 @@ public class QueryServiceTest extends ServiceTestBase {
         SQLRequest request = new SQLRequest();
         request.setSql("select * from test_table");
         request.setAcceptPartial(true);
+        QueryContext queryContext = QueryContextFacade.current();
         SQLResponse response = new SQLResponse();
         response.setHitExceptionCache(true);
-        queryService.logQuery(request, response);
+        queryService.logQuery(queryContext.getQueryId(), request, response);
+    }
+
+    @Test
+    public void testCreateTableToWith() {
+        String create_table1 = " create table tableId as select * from some_table1;";
+        String create_table2 = "CREATE TABLE tableId2 AS select * FROM some_table2;";
+        String select_table = "select * from tableId join tableId2 on tableId.a = tableId2.b;";
+
+        KylinConfig config = KylinConfig.getInstanceFromEnv();
+        config.setProperty("kylin.query.convert-create-table-to-with", "true");
+        KylinConfig.setKylinConfigThreadLocal(config);
+
+        SQLRequest request = new SQLRequest();
+        request.setProject("default");
+        request.setSql(create_table1);
+        queryService.doQueryWithCache(request);
+
+        request.setSql(create_table2);
+        queryService.doQueryWithCache(request);
+
+        request.setSql(select_table);
+        SQLResponse response = queryService.doQueryWithCache(request, true);
+
+        Assert.assertEquals(
+                "WITH tableId as (select * from some_table1) , tableId2 AS (select * FROM some_table2) select * from tableId join tableId2 on tableId.a = tableId2.b;",
+                response.getExceptionMessage());
     }
 }

@@ -18,16 +18,23 @@
 
 package org.apache.kylin.source.hive;
 
-import com.google.common.collect.Lists;
+import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.engine.mr.IMRInput;
+import org.apache.kylin.metadata.model.IBuildable;
 import org.apache.kylin.metadata.model.TableDesc;
+import org.apache.kylin.source.IReadableTable;
+import org.apache.kylin.source.ISampleDataDeployer;
 import org.apache.kylin.source.ISource;
-import org.apache.kylin.source.ReadableTable;
-
-import java.util.List;
+import org.apache.kylin.source.ISourceMetadataExplorer;
+import org.apache.kylin.source.SourcePartition;
 
 //used by reflection
 public class HiveSource implements ISource {
+
+    @Override
+    public ISourceMetadataExplorer getSourceMetadataExplorer() {
+        return new HiveMetadataExplorer();
+    }
 
     @SuppressWarnings("unchecked")
     @Override
@@ -40,13 +47,32 @@ public class HiveSource implements ISource {
     }
 
     @Override
-    public ReadableTable createReadableTable(TableDesc tableDesc) {
+    public IReadableTable createReadableTable(TableDesc tableDesc) {
+        // hive view must have been materialized already
+        // ref HiveMRInput.createLookupHiveViewMaterializationStep()
+        if (tableDesc.isView()) {
+            KylinConfig config = KylinConfig.getInstanceFromEnv();
+            String tableName = tableDesc.getMaterializedName();
+            
+            tableDesc = new TableDesc();
+            tableDesc.setDatabase(config.getHiveDatabaseForIntermediateTable());
+            tableDesc.setName(tableName);
+        }
         return new HiveTable(tableDesc);
     }
 
     @Override
-    public List<String> getMRDependentResources(TableDesc table) {
-        return Lists.newArrayList();
+    public SourcePartition enrichSourcePartitionBeforeBuild(IBuildable buildable, SourcePartition srcPartition) {
+        SourcePartition result = SourcePartition.getCopyOf(srcPartition);
+        if (srcPartition.getTSRange() != null) {
+            result.setSegRange(null);
+        }
+        return result;
+    }
+
+    @Override
+    public ISampleDataDeployer getSampleDataDeployer() {
+        return new HiveMetadataExplorer();
     }
 
 }

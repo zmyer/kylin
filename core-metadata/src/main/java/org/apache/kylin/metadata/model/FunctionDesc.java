@@ -18,35 +18,48 @@
 
 package org.apache.kylin.metadata.model;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
+import java.io.Serializable;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.kylin.measure.MeasureType;
 import org.apache.kylin.measure.MeasureTypeFactory;
 import org.apache.kylin.measure.basic.BasicMeasureType;
+import org.apache.kylin.measure.percentile.PercentileMeasureType;
 import org.apache.kylin.metadata.datatype.DataType;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 /**
  */
+@SuppressWarnings("serial")
 @JsonAutoDetect(fieldVisibility = Visibility.NONE, getterVisibility = Visibility.NONE, isGetterVisibility = Visibility.NONE, setterVisibility = Visibility.NONE)
-public class FunctionDesc {
+public class FunctionDesc implements Serializable {
+
+    public static FunctionDesc newInstance(String expression, ParameterDesc param, String returnType) {
+        FunctionDesc r = new FunctionDesc();
+        r.expression = (expression == null) ? null : expression.toUpperCase();
+        r.parameter = param;
+        r.returnType = returnType;
+        r.returnDataType = DataType.getType(returnType);
+        return r;
+    }
 
     public static final String FUNC_SUM = "SUM";
     public static final String FUNC_MIN = "MIN";
     public static final String FUNC_MAX = "MAX";
     public static final String FUNC_COUNT = "COUNT";
     public static final String FUNC_COUNT_DISTINCT = "COUNT_DISTINCT";
+    public static final String FUNC_PERCENTILE = "PERCENTILE_APPROX";
     public static final Set<String> BUILT_IN_AGGREGATIONS = Sets.newHashSet();
 
     static {
@@ -55,6 +68,7 @@ public class FunctionDesc {
         BUILT_IN_AGGREGATIONS.add(FUNC_MIN);
         BUILT_IN_AGGREGATIONS.add(FUNC_SUM);
         BUILT_IN_AGGREGATIONS.add(FUNC_COUNT_DISTINCT);
+        BUILT_IN_AGGREGATIONS.add(FUNC_PERCENTILE);
     }
 
     public static final String PARAMETER_TYPE_CONSTANT = "constant";
@@ -69,57 +83,41 @@ public class FunctionDesc {
 
     @JsonProperty("configuration")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    private HashMap<String, String> configuration = new LinkedHashMap<String, String>();
+    private Map<String, String> configuration = new LinkedHashMap<String, String>();
 
     private DataType returnDataType;
     private MeasureType<?> measureType;
     private boolean isDimensionAsMetric = false;
 
-    public void init(TableDesc factTable, List<TableDesc> lookupTables) {
+    public void init(DataModelDesc model) {
         expression = expression.toUpperCase();
+        if (expression.equals(PercentileMeasureType.FUNC_PERCENTILE)) {
+            expression = PercentileMeasureType.FUNC_PERCENTILE_APPROX; // for backward compatibility
+        }
+
         returnDataType = DataType.getType(returnType);
 
         for (ParameterDesc p = parameter; p != null; p = p.getNextParameter()) {
-            p.setValue(p.getValue().toUpperCase());
-        }
-
-        ArrayList<TblColRef> colRefs = Lists.newArrayList();
-        for (ParameterDesc p = parameter; p != null; p = p.getNextParameter()) {
             if (p.isColumnType()) {
-                ColumnDesc sourceColumn = findColumn(factTable, lookupTables, p.getValue());
-                TblColRef colRef = new TblColRef(sourceColumn);
-                colRefs.add(colRef);
+                TblColRef colRef = model.findColumn(p.getValue());
+                p.setValue(colRef.getIdentity());
+                p.setColRef(colRef);
             }
         }
-
-        parameter.setColRefs(colRefs);
-    }
-
-    private ColumnDesc findColumn(TableDesc factTable, List<TableDesc> lookups, String columnName) {
-        ColumnDesc ret = factTable.findColumnByName(columnName);
-        if (ret != null) {
-            return ret;
-        }
-
-        for (TableDesc lookup : lookups) {
-            ret = lookup.findColumnByName(columnName);
-            if (ret != null) {
-                return ret;
-            }
-        }
-        throw new IllegalStateException("Column is not found in any table from the model: " + columnName);
     }
 
     private void reInitMeasureType() {
         if (isDimensionAsMetric && isCountDistinct()) {
             // create DimCountDis
             measureType = MeasureTypeFactory.createNoRewriteFieldsMeasureType(getExpression(), getReturnDataType());
+            returnDataType = DataType.getType("dim_dc");
         } else {
             measureType = MeasureTypeFactory.create(getExpression(), getReturnDataType());
         }
     }
 
     public MeasureType<?> getMeasureType() {
+        //like max(cal_dt)
         if (isDimensionAsMetric && !isCountDistinct()) {
             return null;
         }
@@ -146,22 +144,29 @@ public class FunctionDesc {
     }
 
     public String getRewriteFieldName() {
-        if (isSum()) {
-            return getParameter().getValue();
-        } else if (isCount()) {
-            return "COUNT__"; // ignores parameter, count(*), count(1), count(col) are all the same
+        if (isCount()) {
+            return "_KY_" + "COUNT__"; // ignores parameter, count(*), count(1), count(col) are all the same
+        } else if (isCountDistinct()) {
+            return "_KY_" + getFullExpressionInAlphabetOrder().replaceAll("[(),. ]", "_");
         } else {
-            return getFullExpression().replaceAll("[(), ]", "_");
+            return "_KY_" + getFullExpression().replaceAll("[(),. ]", "_");
         }
     }
 
     public DataType getRewriteFieldType() {
-        if (isSum() || isMax() || isMin())
-            return parameter.getColRefs().get(0).getType();
-        else if (getMeasureType() instanceof BasicMeasureType)
-            return returnDataType;
-        else
+        if (getMeasureType() instanceof BasicMeasureType) {
+            if (isMax() || isMin()) {
+                return parameter.getColRefs().get(0).getType();
+            } else if (isSum()) {
+                return parameter.getColRefs().get(0).getType();
+            } else if (isCount()) {
+                return DataType.getType("bigint");
+            } else {
+                throw new IllegalArgumentException("unknown measure type " + getMeasureType());
+            }
+        } else {
             return DataType.ANY;
+        }
     }
 
     public ColumnDesc newFakeRewriteColumn(TableDesc sourceTable) {
@@ -207,6 +212,25 @@ public class FunctionDesc {
         return sb.toString();
     }
 
+    /**
+     * Parameters' name appears in alphabet order.
+     * This method is used for funcs whose parameters appear in arbitrary order
+     */
+    public String getFullExpressionInAlphabetOrder() {
+        StringBuilder sb = new StringBuilder(expression);
+        sb.append("(");
+        ParameterDesc localParam = parameter;
+        List<String> flatParams = Lists.newArrayList();
+        while (localParam != null) {
+            flatParams.add(localParam.getValue());
+            localParam = localParam.getNextParameter();
+        }
+        Collections.sort(flatParams);
+        sb.append(Joiner.on(",").join(flatParams));
+        sb.append(")");
+        return sb.toString();
+    }
+
     public boolean isDimensionAsMetric() {
         return isDimensionAsMetric;
     }
@@ -225,7 +249,7 @@ public class FunctionDesc {
     public void setExpression(String expression) {
         this.expression = expression;
     }
-
+    
     public ParameterDesc getParameter() {
         return parameter;
     }
@@ -246,38 +270,16 @@ public class FunctionDesc {
         return returnType;
     }
 
+    public void setReturnType(String returnType) {
+        this.returnType = returnType;
+    }
+
     public DataType getReturnDataType() {
         return returnDataType;
     }
 
-    public void setReturnType(String returnType) {
-        this.returnType = returnType;
-        this.returnDataType = DataType.getType(returnType);
-    }
-
-    public TblColRef selectTblColRef(Collection<TblColRef> metricColumns, String factTableName) {
-        if (this.isCount())
-            return null; // count is not about any column but the whole row
-
-        ParameterDesc parameter = this.getParameter();
-        if (parameter == null)
-            return null;
-
-        String columnName = parameter.getValue();
-        for (TblColRef col : metricColumns) {
-            if (col.isSameAs(factTableName, columnName)) {
-                return col;
-            }
-        }
-        return null;
-    }
-
-    public HashMap<String, String> getConfiguration() {
+    public Map<String, String> getConfiguration() {
         return configuration;
-    }
-
-    public void setConfiguration(HashMap<String, String> configurations) {
-        this.configuration = configurations;
     }
 
     @Override
@@ -286,6 +288,7 @@ public class FunctionDesc {
         int result = 1;
         result = prime * result + ((expression == null) ? 0 : expression.hashCode());
         result = prime * result + ((isCount() || parameter == null) ? 0 : parameter.hashCode());
+        // NOTE: don't compare returnType, FunctionDesc created at query engine does not have a returnType
         return result;
     }
 
@@ -303,25 +306,31 @@ public class FunctionDesc {
                 return false;
         } else if (!expression.equals(other.expression))
             return false;
-        // NOTE: don't check the parameter of count()
-        if (isCount() == false) {
+        if (isCountDistinct()) {
+            // for count distinct func, param's order doesn't matter
             if (parameter == null) {
                 if (other.parameter != null)
                     return false;
             } else {
-                if (parameter == null) {
-                    if (other.parameter != null)
-                        return false;
-                } else if (!parameter.equals(other.parameter))
+                return parameter.equalInArbitraryOrder(other.parameter);
+            }
+        } else if (!isCount()) { // NOTE: don't check the parameter of count()
+            if (parameter == null) {
+                if (other.parameter != null)
+                    return false;
+            } else {
+                if (!parameter.equals(other.parameter))
                     return false;
             }
         }
+        // NOTE: don't compare returnType, FunctionDesc created at query engine does not have a returnType
         return true;
     }
 
     @Override
     public String toString() {
-        return "FunctionDesc [expression=" + expression + ", parameter=" + parameter + ", returnType=" + returnType + "]";
+        return "FunctionDesc [expression=" + expression + ", parameter=" + parameter + ", returnType=" + returnType
+                + "]";
     }
 
 }

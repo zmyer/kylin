@@ -21,6 +21,7 @@ KylinApp.constant('jobConfig', {
     {name: 'NEW', value: 0},
     {name: 'PENDING', value: 1},
     {name: 'RUNNING', value: 2},
+    {name: 'STOPPED', value: 32},
     {name: 'FINISHED', value: 4},
     {name: 'ERROR', value: 8},
     {name: 'DISCARDED', value: 16}
@@ -38,6 +39,11 @@ KylinApp.constant('jobConfig', {
     {attr: 'progress', name: 'Progress'},
     {attr: 'last_modified', name: 'Last Modified Time'},
     {attr: 'duration', name: 'Duration'}
+  ],
+  searchMode: [
+    {name: 'CUBING', value: 'CUBING_ONLY'},
+    {name: 'CHECK POINT', value: 'CHECKPOINT_ONLY'},
+    {name: 'ALL', value: 'ALL'}
   ],
   queryitems: [
   {attr: 'server', name: 'Server'},

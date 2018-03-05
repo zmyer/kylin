@@ -21,18 +21,26 @@ package org.apache.kylin.rest.service;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.CliCommandExecutor;
 import org.apache.kylin.common.util.Pair;
+import org.apache.kylin.metadata.badquery.BadQueryEntry;
 import org.apache.kylin.metadata.badquery.BadQueryHistory;
-import org.apache.kylin.rest.constant.Constant;
+import org.apache.kylin.rest.exception.BadRequestException;
+import org.apache.kylin.rest.msg.Message;
+import org.apache.kylin.rest.msg.MsgPicker;
+import org.apache.kylin.rest.util.AclEvaluate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import com.google.common.collect.Lists;
 import com.google.common.io.Files;
 
 @Component("diagnosisService")
@@ -40,12 +48,25 @@ public class DiagnosisService extends BasicService {
 
     private static final Logger logger = LoggerFactory.getLogger(DiagnosisService.class);
 
-    private File getDumpDir() {
+    protected File getDumpDir() {
         return Files.createTempDir();
     }
 
+    @Autowired
+    private AclEvaluate aclEvaluate;
+
+    @Autowired
+    private JobService jobService;
+
     private String getDiagnosisPackageName(File destDir) {
-        for (File subDir : destDir.listFiles()) {
+        Message msg = MsgPicker.getMsg();
+
+        File[] files = destDir.listFiles();
+        if (files == null) {
+            throw new BadRequestException(
+                    String.format(msg.getDIAG_PACKAGE_NOT_AVAILABLE(), destDir.getAbsolutePath()));
+        }
+        for (File subDir : files) {
             if (subDir.isDirectory()) {
                 for (File file : subDir.listFiles()) {
                     if (file.getName().endsWith(".zip")) {
@@ -54,24 +75,24 @@ public class DiagnosisService extends BasicService {
                 }
             }
         }
-        throw new RuntimeException("Diagnosis package not found in directory: " + destDir.getAbsolutePath());
+        throw new BadRequestException(String.format(msg.getDIAG_PACKAGE_NOT_FOUND(), destDir.getAbsolutePath()));
     }
 
-    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public BadQueryHistory getProjectBadQueryHistory(String project) throws IOException {
+        aclEvaluate.checkProjectOperationPermission(project);
         return getBadQueryHistoryManager().getBadQueriesForProject(project);
     }
 
-    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public String dumpProjectDiagnosisInfo(String project) throws IOException {
+        aclEvaluate.checkProjectOperationPermission(project);
         File exportPath = getDumpDir();
         String[] args = { project, exportPath.getAbsolutePath() };
         runDiagnosisCLI(args);
         return getDiagnosisPackageName(exportPath);
     }
 
-    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public String dumpJobDiagnosisInfo(String jobId) throws IOException {
+        aclEvaluate.checkProjectOperationPermission(jobService.getJobInstance(jobId));
         File exportPath = getDumpDir();
         String[] args = { jobId, exportPath.getAbsolutePath() };
         runDiagnosisCLI(args);
@@ -79,26 +100,58 @@ public class DiagnosisService extends BasicService {
     }
 
     private void runDiagnosisCLI(String[] args) throws IOException {
-        File cwd = new File("");
-        logger.info("Current path: " + cwd.getAbsolutePath());
+        Message msg = MsgPicker.getMsg();
 
-        logger.info("DiagnosisInfoCLI args: " + Arrays.toString(args));
+        File cwd = new File("");
+        logger.debug("Current path: " + cwd.getAbsolutePath());
+
+        logger.debug("DiagnosisInfoCLI args: " + Arrays.toString(args));
         File script = new File(KylinConfig.getKylinHome() + File.separator + "bin", "diag.sh");
         if (!script.exists()) {
-            throw new RuntimeException("diag.sh not found at " + script.getAbsolutePath());
+            throw new BadRequestException(String.format(msg.getDIAG_NOT_FOUND(), script.getAbsolutePath()));
         }
 
         String diagCmd = script.getAbsolutePath() + " " + StringUtils.join(args, " ");
         CliCommandExecutor executor = KylinConfig.getInstanceFromEnv().getCliCommandExecutor();
-        Pair<Integer, String> cmdOutput = executor.execute(diagCmd, new org.apache.kylin.common.util.Logger() {
-            @Override
-            public void log(String message) {
-                logger.info(message);
-            }
-        });
+        Pair<Integer, String> cmdOutput = executor.execute(diagCmd);
 
-        if (cmdOutput.getKey() != 0) {
-            throw new RuntimeException("Failed to generate diagnosis package.");
+        if (cmdOutput.getFirst() != 0) {
+            throw new BadRequestException(msg.getGENERATE_DIAG_PACKAGE_FAIL());
         }
     }
+
+    public List<BadQueryEntry> getQueriesByType(List<BadQueryEntry> allBadEntries, String queryType)
+            throws IOException {
+
+        List<BadQueryEntry> filteredEntries = Lists.newArrayList();
+        for (BadQueryEntry entry : allBadEntries) {
+            if (null != entry && entry.getAdj().equals(queryType)) {
+                filteredEntries.add(entry);
+            }
+        }
+        return filteredEntries;
+    }
+
+    public Map<String, Object> getQueries(Integer pageOffset, Integer pageSize, String queryType,
+            List<BadQueryEntry> allBadEntries) throws IOException {
+        HashMap<String, Object> data = new HashMap<>();
+        List<BadQueryEntry> filteredEntries = getQueriesByType(allBadEntries, queryType);
+
+        int offset = pageOffset * pageSize;
+        int limit = pageSize;
+
+        if (filteredEntries.size() <= offset) {
+            offset = filteredEntries.size();
+            limit = 0;
+        }
+
+        if ((filteredEntries.size() - offset) < limit) {
+            limit = filteredEntries.size() - offset;
+        }
+
+        data.put("badQueries", filteredEntries.subList(offset, offset + limit));
+        data.put("size", filteredEntries.size());
+        return data;
+    }
+
 }

@@ -24,13 +24,7 @@
 # take a look at SandboxMetastoreCLI
 
 
-dir=$(dirname ${0})
-
-# We should set KYLIN_HOME here for multiple tomcat instsances that are on the same node.
-# In addition, we should set a KYLIN_HOME for the global use as normal.
-export KYLIN_HOME=${dir}/../
-
-source ${dir}/check-env.sh
+source $(cd -P -- "$(dirname -- "$0")" && pwd -P)/header.sh
 
 if [ "$1" == "backup" ]
 then
@@ -91,15 +85,21 @@ then
 
     ${KYLIN_HOME}/bin/kylin.sh org.apache.kylin.common.persistence.ResourceTool  reset
     
+elif [ "$1" == "refresh-cube-signature" ]
+then
+
+    ${KYLIN_HOME}/bin/kylin.sh org.apache.kylin.cube.cli.CubeSignatureRefresher
+    
 elif [ "$1" == "clean" ]
 then
 
-    ${KYLIN_HOME}/bin/kylin.sh org.apache.kylin.engine.mr.steps.MetadataCleanupJob "${@:2}"
+    ${KYLIN_HOME}/bin/kylin.sh org.apache.kylin.tool.MetadataCleanupJob  "${@:2}"
 
 else
     echo "usage: metastore.sh backup"
     echo "       metastore.sh fetch DATA"
     echo "       metastore.sh reset"
+    echo "       metastore.sh refresh-cube-signature"
     echo "       metastore.sh restore PATH_TO_LOCAL_META"
     echo "       metastore.sh list RESOURCE_PATH"
     echo "       metastore.sh cat RESOURCE_PATH"

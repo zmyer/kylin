@@ -18,19 +18,24 @@
 
 package org.apache.kylin.measure.dim;
 
+import java.util.List;
+import java.util.Map;
+
 import org.apache.kylin.measure.MeasureAggregator;
 import org.apache.kylin.measure.MeasureIngester;
 import org.apache.kylin.measure.MeasureType;
 import org.apache.kylin.measure.MeasureTypeFactory;
 import org.apache.kylin.metadata.datatype.DataType;
+import org.apache.kylin.metadata.model.FunctionDesc;
 import org.apache.kylin.metadata.model.MeasureDesc;
 import org.apache.kylin.metadata.realization.SQLDigest;
 
-/**
- * Created by dongli on 4/20/16.
- */
+import com.google.common.collect.ImmutableMap;
+
 public class DimCountDistinctMeasureType extends MeasureType<Object> {
-    public static class DimCountDistinctMeasureTypeFactory extends MeasureTypeFactory<Object> {
+    public static final String DATATYPE_DIM_DC = "dim_dc";
+
+    public static class Factory extends MeasureTypeFactory<Object> {
 
         @Override
         public MeasureType<Object> createMeasureType(String funcName, DataType dataType) {
@@ -39,17 +44,17 @@ public class DimCountDistinctMeasureType extends MeasureType<Object> {
 
         @Override
         public String getAggrFunctionName() {
-            return null;
+            return FunctionDesc.FUNC_COUNT_DISTINCT;
         }
 
         @Override
         public String getAggrDataTypeName() {
-            return null;
+            return DATATYPE_DIM_DC;
         }
 
         @Override
         public Class getAggrDataTypeSerializer() {
-            return null;
+            return DimCountDistincSerializer.class;
         }
 
     }
@@ -61,7 +66,7 @@ public class DimCountDistinctMeasureType extends MeasureType<Object> {
 
     @Override
     public MeasureAggregator newAggregator() {
-        throw new UnsupportedOperationException("No aggregator for this measure type.");
+        return new DimCountDistinctAggregator();
     }
 
     @Override
@@ -74,13 +79,18 @@ public class DimCountDistinctMeasureType extends MeasureType<Object> {
         return false;
     }
 
+    static final Map<String, Class<?>> UDAF_MAP = ImmutableMap.<String, Class<?>> of(FunctionDesc.FUNC_COUNT_DISTINCT,
+            DimCountDistinctAggFunc.class);
+
     @Override
-    public Class<?> getRewriteCalciteAggrFunctionClass() {
-        return DimCountDistinctAggFunc.class;
+    public Map<String, Class<?>> getRewriteCalciteAggrFunctions() {
+        return UDAF_MAP;
     }
 
-    public void adjustSqlDigest(MeasureDesc measureDesc, SQLDigest sqlDigest) {
-        sqlDigest.groupbyColumns.addAll(measureDesc.getFunction().getParameter().getColRefs());
-        sqlDigest.aggregations.remove(measureDesc.getFunction());
+    public void adjustSqlDigest(List<MeasureDesc> measureDescs, SQLDigest sqlDigest) {
+        for (MeasureDesc measureDesc : measureDescs) {
+            sqlDigest.groupbyColumns.addAll(measureDesc.getFunction().getParameter().getColRefs());
+            sqlDigest.aggregations.remove(measureDesc.getFunction());
+        }
     }
 }

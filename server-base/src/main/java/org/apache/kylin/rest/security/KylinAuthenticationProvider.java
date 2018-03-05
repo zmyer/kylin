@@ -18,26 +18,28 @@
 
 package org.apache.kylin.rest.security;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.rest.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.util.Assert;
 
-import net.sf.ehcache.Cache;
-import net.sf.ehcache.CacheManager;
-import net.sf.ehcache.Element;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.RemovalListener;
+import com.google.common.cache.RemovalNotification;
+import com.google.common.hash.HashFunction;
+import com.google.common.hash.Hashing;
 
 /**
  * A wrapper class for the authentication provider; Will do something more for Kylin.
@@ -46,71 +48,82 @@ public class KylinAuthenticationProvider implements AuthenticationProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(KylinAuthenticationProvider.class);
 
-    @Autowired
-    UserService userService;
+    private final static com.google.common.cache.Cache<String, Authentication> userCache = CacheBuilder.newBuilder()
+            .maximumSize(KylinConfig.getInstanceFromEnv().getServerUserCacheMaxEntries())
+            .expireAfterWrite(KylinConfig.getInstanceFromEnv().getServerUserCacheExpireSeconds(), TimeUnit.SECONDS)
+            .removalListener(new RemovalListener<String, Authentication>() {
+                @Override
+                public void onRemoval(RemovalNotification<String, Authentication> notification) {
+                    KylinAuthenticationProvider.logger.debug("User cache {} is removed due to {}",
+                            notification.getKey(), notification.getCause());
+                }
+            }).build();
 
     @Autowired
-    private CacheManager cacheManager;
+    @Qualifier("userService")
+    UserService userService;
 
     //Embedded authentication provider
     private AuthenticationProvider authenticationProvider;
 
-    MessageDigest md = null;
+    private HashFunction hf = null;
 
     public KylinAuthenticationProvider(AuthenticationProvider authenticationProvider) {
         super();
         Assert.notNull(authenticationProvider, "The embedded authenticationProvider should not be null.");
         this.authenticationProvider = authenticationProvider;
-        try {
-            md = MessageDigest.getInstance("MD5");
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("Failed to init Message Digest ", e);
-        }
+        hf = Hashing.murmur3_128();
     }
 
     @Override
     public Authentication authenticate(Authentication authentication) throws AuthenticationException {
-        Authentication authed = null;
-        Cache userCache = cacheManager.getCache("UserCache");
-        md.reset();
-        byte[] hashKey = md.digest((authentication.getName() + authentication.getCredentials()).getBytes());
+
+        byte[] hashKey = hf.hashString(authentication.getName() + authentication.getCredentials()).asBytes();
         String userKey = Arrays.toString(hashKey);
 
-        Element authedUser = userCache.get(userKey);
-        if (null != authedUser) {
-            authed = (Authentication) authedUser.getObjectValue();
+        if (userService.isEvictCacheFlag()) {
+            userCache.invalidateAll();
+            userService.setEvictCacheFlag(false);
+        }
+        Authentication authed = userCache.getIfPresent(userKey);
+
+        if (null != authed) {
             SecurityContextHolder.getContext().setAuthentication(authed);
         } else {
             try {
                 authed = authenticationProvider.authenticate(authentication);
-                userCache.put(new Element(userKey, authed));
+
+                ManagedUser user;
+
+                if (authed.getDetails() == null) {
+                    //authed.setAuthenticated(false);
+                    throw new UsernameNotFoundException(
+                            "User not found in LDAP, check whether he/she has been added to the groups.");
+                }
+
+                if (authed.getDetails() instanceof UserDetails) {
+                    UserDetails details = (UserDetails) authed.getDetails();
+                    user = new ManagedUser(details.getUsername(), details.getPassword(), false,
+                            details.getAuthorities());
+                } else {
+                    user = new ManagedUser(authentication.getName(), "skippped-ldap", false, authed.getAuthorities());
+                }
+                Assert.notNull(user, "The UserDetail is null.");
+
+                logger.debug("User {} authorities : {}", user.getUsername(), user.getAuthorities());
+                if (!userService.userExists(user.getUsername())) {
+                    userService.createUser(user);
+                } else {
+                    userService.updateUser(user);
+                }
+
+                userCache.put(userKey, authed);
             } catch (AuthenticationException e) {
                 logger.error("Failed to auth user: " + authentication.getName(), e);
                 throw e;
             }
 
             logger.debug("Authenticated user " + authed.toString());
-
-            UserDetails user;
-
-            if (authed.getDetails() == null) {
-                //authed.setAuthenticated(false);
-                throw new UsernameNotFoundException("User not found in LDAP, check whether he/she has been added to the groups.");
-            }
-
-            if (authed.getDetails() instanceof UserDetails) {
-                user = (UserDetails) authed.getDetails();
-            } else {
-                user = new User(authentication.getName(), "skippped-ldap", authed.getAuthorities());
-            }
-            Assert.notNull(user, "The UserDetail is null.");
-
-            logger.debug("User authorities :" + user.getAuthorities());
-            if (!userService.userExists(user.getUsername())) {
-                userService.createUser(user);
-            } else {
-                userService.updateUser(user);
-            }
         }
 
         return authed;

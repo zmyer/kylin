@@ -20,22 +20,26 @@ package org.apache.kylin.rest.service;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Properties;
+import java.util.TreeMap;
 
+import com.google.common.collect.Lists;
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.PropertiesConfiguration;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.common.util.OrderedProperties;
 import org.apache.kylin.rest.constant.Constant;
-import org.apache.kylin.rest.exception.InternalErrorException;
-import org.apache.kylin.storage.hbase.util.StorageCleanupJob;
+import org.apache.kylin.rest.job.StorageCleanupJob;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Component;
 
 /**
- * @author jianliu
  */
 @Component("adminService")
 public class AdminService extends BasicService {
@@ -43,66 +47,61 @@ public class AdminService extends BasicService {
 
     /**
      * Get Java Env info as string
-     *
-     * @return
      */
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
-    public String getEnv() {
-        logger.debug("Get Kylin Runtime environment");
+    public String getEnv() throws ConfigurationException {
         PropertiesConfiguration tempConfig = new PropertiesConfiguration();
-
+        OrderedProperties orderedProperties = new OrderedProperties(new TreeMap<String, String>());
         // Add Java Env
 
-        try {
-            String content = "";
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            // env
-            Map<String, String> env = System.getenv();
+        String content = "";
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        // env
+        Map<String, String> env = System.getenv();
 
-            for (Map.Entry<String, String> entry : env.entrySet()) {
-                tempConfig.addProperty(entry.getKey(), entry.getValue());
-            }
-
-            // properties
-            Properties proterties = System.getProperties();
-
-            for (Map.Entry<Object, Object> entry : proterties.entrySet()) {
-                tempConfig.setProperty((String) entry.getKey(), entry.getValue());
-            }
-
-            // do save
-            tempConfig.save(baos);
-            content = baos.toString();
-            return content;
-        } catch (ConfigurationException e) {
-            throw new InternalErrorException("Failed to get Kylin env Config", e);
+        for (Map.Entry<String, String> entry : env.entrySet()) {
+            orderedProperties.setProperty(entry.getKey(), entry.getValue());
         }
+
+        // properties
+        Properties properties = System.getProperties();
+
+        for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+            orderedProperties.setProperty((String) entry.getKey(), (String) entry.getValue());
+        }
+
+        for (Map.Entry<String, String> entry : orderedProperties.entrySet()) {
+            tempConfig.addProperty(entry.getKey(), entry.getValue());
+        }
+
+        // do save
+        tempConfig.save(baos);
+        content = baos.toString();
+        return content;
     }
 
-    /**
-     * Get Java config info as String
-     *
-     * @return
-     */
-    // @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
-    public String getConfigAsString() {
-        logger.debug("Get Kylin Runtime Config");
+    @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
+    public void updateConfig(String key, String value) {
+        logger.debug("Update Kylin Runtime Config, key=" + key + ", value=" + value);
 
-        try {
-            return KylinConfig.getInstanceFromEnv().getConfigAsString();
-        } catch (IOException e) {
-            throw new InternalErrorException("Failed to get Kylin Runtime Config", e);
-        }
+        KylinConfig.getInstanceFromEnv().setProperty(key, value);
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN)
     public void cleanupStorage() {
         StorageCleanupJob job = new StorageCleanupJob();
         String[] args = new String[] { "-delete", "true" };
-        try {
-            job.execute(args);
-        } catch (Exception e) {
-            throw new InternalErrorException(e.getMessage(), e);
+        job.execute(args);
+    }
+
+    public String getPublicConfig() throws IOException {
+        final String whiteListProperties = KylinConfig.getInstanceFromEnv().getPropertiesWhiteList();
+
+        Collection<String> propertyKeys = Lists.newArrayList();
+        if (StringUtils.isNotEmpty(whiteListProperties)) {
+            propertyKeys.addAll(Arrays.asList(whiteListProperties.split(",")));
         }
+
+        return KylinConfig.getInstanceFromEnv().exportToString(propertyKeys);
     }
 }

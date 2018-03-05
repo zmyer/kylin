@@ -27,12 +27,18 @@ public interface IJoinedFlatTableDesc {
     String getTableName();
 
     DataModelDesc getDataModel();
-    
+
     List<TblColRef> getAllColumns();
 
-    long getSourceOffsetStart();
-    
-    long getSourceOffsetEnd();
-    
+    int getColumnIndex(TblColRef colRef);
+
+    SegmentRange getSegRange();
+
     TblColRef getDistributedBy();
+
+    TblColRef getClusterBy();
+
+    // optionally present
+    ISegment getSegment();
+
 }

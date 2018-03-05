@@ -20,6 +20,7 @@ package org.apache.kylin.tool;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Set;
 
 import org.apache.commons.cli.Option;
@@ -34,12 +35,13 @@ import org.apache.kylin.cube.CubeDescManager;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.cube.model.CubeDesc;
-import org.apache.kylin.metadata.MetadataManager;
+import org.apache.kylin.metadata.TableMetadataManager;
+import org.apache.kylin.metadata.cachesync.Broadcaster;
 import org.apache.kylin.metadata.model.DataModelDesc;
+import org.apache.kylin.metadata.model.DataModelManager;
 import org.apache.kylin.metadata.model.TableDesc;
 import org.apache.kylin.metadata.project.ProjectInstance;
 import org.apache.kylin.metadata.project.ProjectManager;
-import org.apache.kylin.metadata.realization.RealizationRegistry;
 import org.apache.kylin.metadata.realization.RealizationType;
 import org.apache.kylin.storage.hybrid.HybridManager;
 import org.slf4j.Logger;
@@ -65,24 +67,24 @@ public class CubeMetaIngester extends AbstractApplication {
     private static final Option OPTION_PROJECT = OptionBuilder.withArgName("project").hasArg().isRequired(true).withDescription("specify the target project for the new cubes").create("project");
 
     @SuppressWarnings("static-access")
+    private static final Option OPTION_FORCE_INGEST = OptionBuilder.withArgName("forceIngest").hasArg().isRequired(false).withDescription("skip the target cube, model and table check and ingest by force. Use in caution because it might break existing cubes! Suggest to backup metadata store first").create("forceIngest");
+
+    @SuppressWarnings("static-access")
     private static final Option OPTION_OVERWRITE_TABLES = OptionBuilder.withArgName("overwriteTables").hasArg().isRequired(false).withDescription("If table meta conflicts, overwrite the one in metadata store with the one in srcPath. Use in caution because it might break existing cubes! Suggest to backup metadata store first").create("overwriteTables");
 
     private KylinConfig kylinConfig;
-    private MetadataManager metadataManager;
-    private ProjectManager projectManager;
-    private CubeManager cubeManager;
-    private CubeDescManager cubeDescManager;
-    private RealizationRegistry realizationRegistry;
 
     Set<String> requiredResources = Sets.newLinkedHashSet();
     private String targetProjectName;
     private boolean overwriteTables = false;
+    private boolean forceIngest = false;
 
     @Override
     protected Options getOptions() {
         Options options = new Options();
         options.addOption(OPTION_SRC);
         options.addOption(OPTION_PROJECT);
+        options.addOption(OPTION_FORCE_INGEST);
         options.addOption(OPTION_OVERWRITE_TABLES);
         return options;
     }
@@ -90,15 +92,15 @@ public class CubeMetaIngester extends AbstractApplication {
     @Override
     protected void execute(OptionsHelper optionsHelper) throws Exception {
         kylinConfig = KylinConfig.getInstanceFromEnv();
-        metadataManager = MetadataManager.getInstance(kylinConfig);
-        projectManager = ProjectManager.getInstance(kylinConfig);
-        cubeManager = CubeManager.getInstance(kylinConfig);
-        cubeDescManager = CubeDescManager.getInstance(kylinConfig);
-        realizationRegistry = RealizationRegistry.getInstance(kylinConfig);
+
+        if (optionsHelper.hasOption(OPTION_FORCE_INGEST)) {
+            forceIngest = Boolean.valueOf(optionsHelper.getOptionValue(OPTION_FORCE_INGEST));
+        }
 
         if (optionsHelper.hasOption(OPTION_OVERWRITE_TABLES)) {
             overwriteTables = Boolean.valueOf(optionsHelper.getOptionValue(OPTION_OVERWRITE_TABLES));
         }
+
         targetProjectName = optionsHelper.getOptionValue(OPTION_PROJECT);
 
         String srcPath = optionsHelper.getOptionValue(OPTION_SRC);
@@ -116,7 +118,7 @@ public class CubeMetaIngester extends AbstractApplication {
         tempFolder.mkdir();
         ZipFileUtils.decompressZipfileToDirectory(srcPath, tempFolder);
         if (tempFolder.list().length != 1) {
-            throw new IllegalStateException(tempFolder.list().toString());
+            throw new IllegalStateException(Arrays.toString(tempFolder.list()));
         }
 
         injest(tempFolder.listFiles()[0].getAbsoluteFile());
@@ -124,76 +126,99 @@ public class CubeMetaIngester extends AbstractApplication {
 
     private void injest(File metaRoot) throws IOException {
         KylinConfig srcConfig = KylinConfig.createInstanceFromUri(metaRoot.getAbsolutePath());
-        MetadataManager srcMetadataManager = MetadataManager.getInstance(srcConfig);
+        TableMetadataManager srcMetadataManager = TableMetadataManager.getInstance(srcConfig);
+        DataModelManager srcModelManager = DataModelManager.getInstance(srcConfig);
         HybridManager srcHybridManager = HybridManager.getInstance(srcConfig);
         CubeManager srcCubeManager = CubeManager.getInstance(srcConfig);
         CubeDescManager srcCubeDescManager = CubeDescManager.getInstance(srcConfig);
 
-        checkAndMark(srcMetadataManager, srcHybridManager, srcCubeManager, srcCubeDescManager);
+        checkAndMark(srcMetadataManager, srcModelManager, srcHybridManager, srcCubeManager, srcCubeDescManager);
         ResourceTool.copy(srcConfig, kylinConfig, Lists.newArrayList(requiredResources));
 
-        for (TableDesc tableDesc : srcMetadataManager.listAllTables()) {
+        // clear the cache
+        Broadcaster.getInstance(kylinConfig).notifyClearAll();
+        
+        ProjectManager projectManager = ProjectManager.getInstance(kylinConfig);
+        for (TableDesc tableDesc : srcMetadataManager.listAllTables(null)) {
+            logger.info("add " + tableDesc + " to " + targetProjectName);
             projectManager.addTableDescToProject(Lists.newArrayList(tableDesc.getIdentity()).toArray(new String[0]), targetProjectName);
         }
 
         for (CubeInstance cube : srcCubeManager.listAllCubes()) {
-            projectManager.updateModelToProject(cube.getDataModelDesc().getName(), targetProjectName);
+            logger.info("add " + cube + " to " + targetProjectName);
+            projectManager.addModelToProject(cube.getModel().getName(), targetProjectName);
             projectManager.moveRealizationToProject(RealizationType.CUBE, cube.getName(), targetProjectName, null);
         }
 
     }
 
-    private void checkAndMark(MetadataManager srcMetadataManager, HybridManager srcHybridManager, CubeManager srcCubeManager, CubeDescManager srcCubeDescManager) {
+    private void checkAndMark(TableMetadataManager srcMetadataManager, DataModelManager srcModelManager, HybridManager srcHybridManager, CubeManager srcCubeManager, CubeDescManager srcCubeDescManager) {
         if (srcHybridManager.listHybridInstances().size() > 0) {
             throw new IllegalStateException("Does not support ingest hybrid yet");
         }
 
+        ProjectManager projectManager = ProjectManager.getInstance(kylinConfig);
         ProjectInstance targetProject = projectManager.getProject(targetProjectName);
         if (targetProject == null) {
             throw new IllegalStateException("Target project does not exist in target metadata: " + targetProjectName);
         }
 
-        for (TableDesc tableDesc : srcMetadataManager.listAllTables()) {
-            TableDesc existing = metadataManager.getTableDesc(tableDesc.getIdentity());
+        TableMetadataManager metadataManager = TableMetadataManager.getInstance(kylinConfig);
+        for (TableDesc tableDesc : srcMetadataManager.listAllTables(null)) {
+            TableDesc existing = metadataManager.getTableDesc(tableDesc.getIdentity(), targetProjectName);
             if (existing != null && !existing.equals(tableDesc)) {
                 logger.info("Table {} already has a different version in target metadata store", tableDesc.getIdentity());
                 logger.info("Existing version: " + existing);
                 logger.info("New version: " + tableDesc);
 
-                if (!overwriteTables) {
+                if (!forceIngest && !overwriteTables) {
                     throw new IllegalStateException("table already exists with a different version: " + tableDesc.getIdentity() + ". Consider adding -overwriteTables option to force overwriting (with caution)");
                 } else {
                     logger.warn("Overwriting the old table desc: " + tableDesc.getIdentity());
                 }
             }
-            requiredResources.add(TableDesc.concatResourcePath(tableDesc.getIdentity()));
+            requiredResources.add(tableDesc.getResourcePath());
         }
 
-        for (DataModelDesc dataModelDesc : srcMetadataManager.listDataModels()) {
-            DataModelDesc existing = metadataManager.getDataModelDesc(dataModelDesc.getName());
+        DataModelManager modelManager = DataModelManager.getInstance(kylinConfig);
+        for (DataModelDesc dataModelDesc : srcModelManager.listDataModels()) {
+            DataModelDesc existing = modelManager.getDataModelDesc(dataModelDesc.getName());
             if (existing != null) {
-                throw new IllegalStateException("Already exist a model called " + dataModelDesc.getName());
+                if (!forceIngest) {
+                    throw new IllegalStateException("Already exist a model called " + dataModelDesc.getName());
+                } else {
+                    logger.warn("Overwriting the old model desc: " + dataModelDesc.getName());
+                }
             }
             requiredResources.add(DataModelDesc.concatResourcePath(dataModelDesc.getName()));
         }
 
+        CubeDescManager cubeDescManager = CubeDescManager.getInstance(kylinConfig);
         for (CubeDesc cubeDesc : srcCubeDescManager.listAllDesc()) {
             CubeDesc existing = cubeDescManager.getCubeDesc(cubeDesc.getName());
             if (existing != null) {
-                throw new IllegalStateException("Already exist a cube desc called " + cubeDesc.getName());
+                if (!forceIngest) {
+                    throw new IllegalStateException("Already exist a cube desc called " + cubeDesc.getName());
+                } else {
+                    logger.warn("Overwriting the old cube desc: " + cubeDesc.getName());
+                }
             }
             requiredResources.add(CubeDesc.concatResourcePath(cubeDesc.getName()));
         }
 
+        CubeManager cubeManager = CubeManager.getInstance(kylinConfig);
         for (CubeInstance cube : srcCubeManager.listAllCubes()) {
             CubeInstance existing = cubeManager.getCube(cube.getName());
             if (existing != null) {
-                throw new IllegalStateException("Already exist a cube desc called " + cube.getName());
+                if (!forceIngest) {
+                    throw new IllegalStateException("Already exist a cube called " + cube.getName());
+                } else {
+                    logger.warn("Overwriting the old cube: " + cube.getName());
+                }
             }
             requiredResources.add(CubeInstance.concatResourcePath(cube.getName()));
         }
 
-      
     }
 
     public static void main(String[] args) {

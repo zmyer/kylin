@@ -73,7 +73,7 @@ public class RowKeyDecoder {
         if (this.cuboid != null && this.cuboid.getId() == cuboidID) {
             return;
         }
-        this.cuboid = Cuboid.findById(cubeDesc, cuboidID);
+        this.cuboid = Cuboid.findForMandatory(cubeDesc, cuboidID);
     }
 
     private void collectValue(TblColRef col, byte[] valueBytes, int length) throws IOException {

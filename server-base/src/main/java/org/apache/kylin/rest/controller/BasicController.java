@@ -18,15 +18,32 @@
 
 package org.apache.kylin.rest.controller;
 
-import javax.servlet.http.HttpServletRequest;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.kylin.rest.constant.Constant;
 import org.apache.kylin.rest.exception.BadRequestException;
 import org.apache.kylin.rest.exception.ForbiddenException;
+import org.apache.kylin.rest.exception.InternalErrorException;
 import org.apache.kylin.rest.exception.NotFoundException;
+import org.apache.kylin.rest.exception.UnauthorizedException;
+import org.apache.kylin.rest.msg.Message;
+import org.apache.kylin.rest.msg.MsgPicker;
 import org.apache.kylin.rest.response.ErrorResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -42,6 +59,16 @@ public class BasicController {
     @ResponseBody
     ErrorResponse handleError(HttpServletRequest req, Exception ex) {
         logger.error("", ex);
+
+        Message msg = MsgPicker.getMsg();
+        Throwable cause = ex;
+        while (cause != null) {
+            if (cause.getClass().getPackage().getName().startsWith("org.apache.hadoop.hbase")) {
+                return new ErrorResponse(req.getRequestURL().toString(), new InternalErrorException(String.format(msg.getHBASE_FAIL(), ex.getMessage()), ex));
+            }
+            cause = cause.getCause();
+        }
+
         return new ErrorResponse(req.getRequestURL().toString(), ex);
     }
 
@@ -66,4 +93,46 @@ public class BasicController {
         logger.error("", ex);
         return new ErrorResponse(req.getRequestURL().toString(), ex);
     }
+
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    @ExceptionHandler(UnauthorizedException.class)
+    @ResponseBody
+    ErrorResponse handleUnauthorized(HttpServletRequest req, Exception ex) {
+        return new ErrorResponse(req.getRequestURL().toString(), ex);
+    }
+
+    protected void checkRequiredArg(String fieldName, Object fieldValue) {
+        if (fieldValue == null || StringUtils.isEmpty(String.valueOf(fieldValue))) {
+            throw new BadRequestException(fieldName + " is required");
+        }
+    }
+
+    protected void setDownloadResponse(String downloadFile, final HttpServletResponse response) {
+        File file = new File(downloadFile);
+        try (InputStream fileInputStream = new FileInputStream(file); OutputStream output = response.getOutputStream()) {
+            response.reset();
+            response.setContentType("application/octet-stream");
+            response.setContentLength((int) (file.length()));
+            response.setHeader("Content-Disposition", "attachment; filename=\"" + file.getName() + "\"");
+            IOUtils.copyLarge(fileInputStream, output);
+            output.flush();
+        } catch (IOException e) {
+            throw new InternalErrorException("Failed to download file: " + e.getMessage(), e);
+        }
+    }
+
+    public boolean isAdmin() {
+        boolean isAdmin = false;
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null) {
+            for (GrantedAuthority auth : authentication.getAuthorities()) {
+                if (auth.getAuthority().equals(Constant.ROLE_ADMIN)) {
+                    isAdmin = true;
+                    break;
+                }
+            }
+        }
+        return isAdmin;
+    }
+
 }

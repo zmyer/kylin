@@ -25,10 +25,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-weight: 400;
-  overflow-x: hidden;
-  overflow-y: auto;
+  /*overflow-x: hidden;*/
+  /*overflow-y: auto;*/
 }
-
+#main{
+  overflow-x: hidden;
+}
 /* Layout */
 .wrapper {
   min-height: 100%;
@@ -4307,7 +4309,7 @@ fieldset[disabled] .btn-vk.active {
 .alert-info,
 .label-danger,
 .label-info,
-.label-waring,
+.label-warning,
 .label-primary,
 .label-success,
 .modal-primary .modal-body,
@@ -4349,7 +4351,7 @@ fieldset[disabled] .btn-vk.active {
 .bg-yellow,
 .callout.callout-warning,
 .alert-warning,
-.label-waring,
+.label-warning,
 .modal-warning .modal-body {
   background-color: #f39c12 !important;
 }
@@ -4744,6 +4746,11 @@ Gradient Background colors
   opacity: 1;
   filter: alpha(opacity=100);
 }
+.model_graph svg{
+  width:1100px !important;
+  height:600px !important;
+}
+
 
 /*
  * Misc: print
@@ -4795,3 +4802,4 @@ Gradient Background colors
     white-space: normal !important;
   }
 }
+

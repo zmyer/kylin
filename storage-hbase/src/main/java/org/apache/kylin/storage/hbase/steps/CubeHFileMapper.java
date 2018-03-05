@@ -23,7 +23,6 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.cube.CubeManager;
@@ -33,7 +32,7 @@ import org.apache.kylin.cube.model.HBaseColumnFamilyDesc;
 import org.apache.kylin.engine.mr.KylinMapper;
 import org.apache.kylin.engine.mr.common.AbstractHadoopJob;
 import org.apache.kylin.engine.mr.common.BatchConstants;
-import org.apache.kylin.measure.MeasureDecoder;
+import org.apache.kylin.measure.MeasureCodec;
 
 import com.google.common.collect.Lists;
 
@@ -41,19 +40,19 @@ import com.google.common.collect.Lists;
  * @author George Song (ysong1)
  * 
  */
-public class CubeHFileMapper extends KylinMapper<Text, Text, ImmutableBytesWritable, KeyValue> {
-
-    ImmutableBytesWritable outputKey = new ImmutableBytesWritable();
+public class CubeHFileMapper extends KylinMapper<Text, Text, RowKeyWritable, KeyValue> {
 
     String cubeName;
     CubeDesc cubeDesc;
 
-    MeasureDecoder inputCodec;
+    MeasureCodec inputCodec;
     Object[] inputMeasures;
     List<KeyValueCreator> keyValueCreators;
 
+    private RowKeyWritable rowKeyWritable = new RowKeyWritable();
+
     @Override
-    protected void setup(Context context) throws IOException {
+    protected void doSetup(Context context) throws IOException {
         super.bindCurrentConfiguration(context.getConfiguration());
         cubeName = context.getConfiguration().get(BatchConstants.CFG_CUBE_NAME);
 
@@ -62,7 +61,7 @@ public class CubeHFileMapper extends KylinMapper<Text, Text, ImmutableBytesWrita
         CubeManager cubeMgr = CubeManager.getInstance(config);
         cubeDesc = cubeMgr.getCube(cubeName).getDescriptor();
 
-        inputCodec = new MeasureDecoder(cubeDesc.getMeasures());
+        inputCodec = new MeasureCodec(cubeDesc.getMeasures());
         inputMeasures = new Object[cubeDesc.getMeasures().size()];
         keyValueCreators = Lists.newArrayList();
 
@@ -74,15 +73,15 @@ public class CubeHFileMapper extends KylinMapper<Text, Text, ImmutableBytesWrita
     }
 
     @Override
-    public void map(Text key, Text value, Context context) throws IOException, InterruptedException {
-        outputKey.set(key.getBytes(), 0, key.getLength());
+    public void doMap(Text key, Text value, Context context) throws IOException, InterruptedException {
         KeyValue outputValue;
 
         int n = keyValueCreators.size();
         if (n == 1 && keyValueCreators.get(0).isFullCopy) { // shortcut for simple full copy
 
             outputValue = keyValueCreators.get(0).create(key, value.getBytes(), 0, value.getLength());
-            context.write(outputKey, outputValue);
+            rowKeyWritable.set(outputValue.createKeyOnly(false).getKey());
+            context.write(rowKeyWritable, outputValue);
 
         } else { // normal (complex) case that distributes measures to multiple HBase columns
 
@@ -90,7 +89,8 @@ public class CubeHFileMapper extends KylinMapper<Text, Text, ImmutableBytesWrita
 
             for (int i = 0; i < n; i++) {
                 outputValue = keyValueCreators.get(i).create(key, inputMeasures);
-                context.write(outputKey, outputValue);
+                rowKeyWritable.set(outputValue.createKeyOnly(false).getKey());
+                context.write(rowKeyWritable, outputValue);
             }
         }
     }

@@ -18,8 +18,7 @@
 
 package org.apache.kylin.cube.kv;
 
-import java.util.Map;
-
+import com.google.common.collect.Maps;
 import org.apache.kylin.common.util.Dictionary;
 import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.cube.model.CubeDesc;
@@ -33,9 +32,9 @@ import org.apache.kylin.metadata.model.TblColRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.collect.Maps;
+import java.util.Map;
 
-public class CubeDimEncMap implements IDimensionEncodingMap {
+public class CubeDimEncMap implements IDimensionEncodingMap, java.io.Serializable {
 
     private static final Logger logger = LoggerFactory.getLogger(CubeDimEncMap.class);
 
@@ -72,7 +71,7 @@ public class CubeDimEncMap implements IDimensionEncodingMap {
                 }
             } else {
                 // normal case
-                result = DimensionEncodingFactory.create(colDesc.getEncodingName(), colDesc.getEncodingArgs());
+                result = DimensionEncodingFactory.create(colDesc.getEncodingName(), colDesc.getEncodingArgs(), colDesc.getEncodingVersion());
             }
             encMap.put(col, result);
         }

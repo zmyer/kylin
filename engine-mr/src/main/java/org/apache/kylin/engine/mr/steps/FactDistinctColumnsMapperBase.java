@@ -30,7 +30,8 @@ import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.cube.cuboid.Cuboid;
 import org.apache.kylin.cube.model.CubeDesc;
-import org.apache.kylin.cube.model.CubeJoinedFlatTableDesc;
+import org.apache.kylin.cube.model.CubeJoinedFlatTableEnrich;
+import org.apache.kylin.engine.EngineFactory;
 import org.apache.kylin.engine.mr.IMRInput.IMRTableInputFormat;
 import org.apache.kylin.engine.mr.KylinMapper;
 import org.apache.kylin.engine.mr.MRUtil;
@@ -38,27 +39,32 @@ import org.apache.kylin.engine.mr.common.AbstractHadoopJob;
 import org.apache.kylin.engine.mr.common.BatchConstants;
 import org.apache.kylin.metadata.model.TblColRef;
 
+import com.google.common.collect.Lists;
+
 /**
  */
-public class FactDistinctColumnsMapperBase<KEYIN, VALUEIN> extends KylinMapper<KEYIN, VALUEIN, Text, Text> {
+abstract public class FactDistinctColumnsMapperBase<KEYIN, VALUEIN> extends KylinMapper<KEYIN, VALUEIN, SelfDefineSortableKey, Text> {
 
     protected String cubeName;
     protected CubeInstance cube;
     protected CubeSegment cubeSeg;
     protected CubeDesc cubeDesc;
     protected long baseCuboidId;
-    protected List<TblColRef> factDictCols;
+    protected List<TblColRef> dictCols;
     protected IMRTableInputFormat flatTableInputFormat;
 
     protected Text outputKey = new Text();
+    //protected SelfDefineSortableKey sortableKey = new SelfDefineSortableKey();
     protected Text outputValue = new Text();
     protected int errorRecordCounter = 0;
 
-    protected CubeJoinedFlatTableDesc intermediateTableDesc;
+    protected CubeJoinedFlatTableEnrich intermediateTableDesc;
     protected int[] dictionaryColumnIndex;
 
+    protected FactDistinctColumnsReducerMapping reducerMapping;
+    
     @Override
-    protected void setup(Context context) throws IOException {
+    protected void doSetup(Context context) throws IOException {
         Configuration conf = context.getConfiguration();
         bindCurrentConfiguration(conf);
         KylinConfig config = AbstractHadoopJob.loadKylinPropsAndMetadata();
@@ -68,18 +74,20 @@ public class FactDistinctColumnsMapperBase<KEYIN, VALUEIN> extends KylinMapper<K
         cubeSeg = cube.getSegmentById(conf.get(BatchConstants.CFG_CUBE_SEGMENT_ID));
         cubeDesc = cube.getDescriptor();
         baseCuboidId = Cuboid.getBaseCuboidId(cubeDesc);
-        factDictCols = CubeManager.getInstance(config).getAllDictColumnsOnFact(cubeDesc);
+        dictCols = Lists.newArrayList(cubeDesc.getAllColumnsNeedDictionaryBuilt());
 
         flatTableInputFormat = MRUtil.getBatchCubingInputSide(cubeSeg).getFlatTableInputFormat();
 
-        intermediateTableDesc = new CubeJoinedFlatTableDesc(cubeDesc);
-        dictionaryColumnIndex = new int[factDictCols.size()];
-        for (int i = 0; i < factDictCols.size(); i++) {
-            TblColRef colRef = factDictCols.get(i);
+        intermediateTableDesc = new CubeJoinedFlatTableEnrich(EngineFactory.getJoinedFlatTableDesc(cubeSeg), cubeDesc);
+        dictionaryColumnIndex = new int[dictCols.size()];
+        for (int i = 0; i < dictCols.size(); i++) {
+            TblColRef colRef = dictCols.get(i);
             int columnIndexOnFlatTbl = intermediateTableDesc.getColumnIndex(colRef);
             dictionaryColumnIndex[i] = columnIndexOnFlatTbl;
         }
 
+        reducerMapping = new FactDistinctColumnsReducerMapping(cube,
+                conf.getInt(BatchConstants.CFG_HLL_REDUCER_NUM, 1));
     }
 
     protected void handleErrorRecord(String[] record, Exception ex) throws IOException {
@@ -88,7 +96,7 @@ public class FactDistinctColumnsMapperBase<KEYIN, VALUEIN> extends KylinMapper<K
         ex.printStackTrace(System.err);
 
         errorRecordCounter++;
-        if (errorRecordCounter > BatchConstants.ERROR_RECORD_LOG_THRESHOLD) {
+        if (errorRecordCounter > cubeSeg.getConfig().getErrorRecordThreshold()) {
             if (ex instanceof IOException)
                 throw (IOException) ex;
             else if (ex instanceof RuntimeException)

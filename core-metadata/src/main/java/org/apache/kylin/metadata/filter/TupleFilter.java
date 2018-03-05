@@ -27,6 +27,8 @@ import java.util.Set;
 
 import org.apache.kylin.metadata.model.TblColRef;
 import org.apache.kylin.metadata.tuple.IEvaluatableTuple;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Maps;
 
@@ -37,8 +39,10 @@ import com.google.common.collect.Maps;
  */
 public abstract class TupleFilter {
 
+    static final Logger logger = LoggerFactory.getLogger(TupleFilter.class);
+
     public enum FilterOperatorEnum {
-        EQ(1), NEQ(2), GT(3), LT(4), GTE(5), LTE(6), ISNULL(7), ISNOTNULL(8), IN(9), NOTIN(10), AND(20), OR(21), NOT(22), COLUMN(30), CONSTANT(31), DYNAMIC(32), EXTRACT(33), CASE(34), FUNCTION(35), MASSIN(36);
+        EQ(1), NEQ(2), GT(3), LT(4), GTE(5), LTE(6), ISNULL(7), ISNOTNULL(8), IN(9), NOTIN(10), AND(20), OR(21), NOT(22), COLUMN(30), CONSTANT(31), DYNAMIC(32), EXTRACT(33), CASE(34), FUNCTION(35), MASSIN(36), EVAL_FUNC(37), UNSUPPORTED(38);
 
         private final int value;
 
@@ -80,7 +84,6 @@ public abstract class TupleFilter {
 
     protected final List<TupleFilter> children;
     protected FilterOperatorEnum operator;
-    protected boolean hasChildren;
 
     protected TupleFilter(List<TupleFilter> filters, FilterOperatorEnum op) {
         this.children = filters;
@@ -92,6 +95,11 @@ public abstract class TupleFilter {
     }
 
     final public void addChildren(List<? extends TupleFilter> children) {
+        for (TupleFilter c : children)
+            addChild(c); // subclass overrides addChild()
+    }
+
+    final public void addChildren(TupleFilter... children) {
         for (TupleFilter c : children)
             addChild(c); // subclass overrides addChild()
     }
@@ -113,7 +121,46 @@ public abstract class TupleFilter {
     }
 
     public TupleFilter reverse() {
-        throw new UnsupportedOperationException();
+        logger.warn("Cannot reverse " + this + ", loosen the filter to true");
+        return ConstantTupleFilter.TRUE;
+    }
+
+    /**
+     * The storage level dislike NOT logic
+     */
+    public TupleFilter removeNot() {
+        return removeNotInternal(this);
+    }
+
+    private TupleFilter removeNotInternal(TupleFilter filter) {
+        FilterOperatorEnum op = filter.getOperator();
+
+        if (!(filter instanceof LogicalTupleFilter)) {
+            return filter;
+        }
+
+        LogicalTupleFilter logicalFilter = (LogicalTupleFilter) filter;
+
+        switch (logicalFilter.operator) {
+        case NOT:
+            assert (filter.children.size() == 1);
+            TupleFilter reverse = filter.children.get(0).reverse();
+            return removeNotInternal(reverse);
+        case AND:
+            LogicalTupleFilter andFilter = new LogicalTupleFilter(FilterOperatorEnum.AND);
+            for (TupleFilter child : logicalFilter.children) {
+                andFilter.addChild(removeNotInternal(child));
+            }
+            return andFilter;
+        case OR:
+            LogicalTupleFilter orFilter = new LogicalTupleFilter(FilterOperatorEnum.OR);
+            for (TupleFilter child : logicalFilter.children) {
+                orFilter.addChild(removeNotInternal(child));
+            }
+            return orFilter;
+        default:
+            throw new IllegalStateException("This filter is unexpected: " + filter);
+        }
     }
 
     /**
@@ -235,6 +282,28 @@ public abstract class TupleFilter {
         for (TupleFilter child : filter.getChildren()) {
             collectColumns(child, collector);
         }
+    }
+
+    public static TupleFilter and(TupleFilter f1, TupleFilter f2) {
+        if (f1 == null)
+            return f2;
+        if (f2 == null)
+            return f1;
+
+        if (f1.getOperator() == FilterOperatorEnum.AND) {
+            f1.addChild(f2);
+            return f1;
+        }
+
+        if (f2.getOperator() == FilterOperatorEnum.AND) {
+            f2.addChild(f1);
+            return f2;
+        }
+
+        LogicalTupleFilter and = new LogicalTupleFilter(FilterOperatorEnum.AND);
+        and.addChild(f1);
+        and.addChild(f2);
+        return and;
     }
 
 }

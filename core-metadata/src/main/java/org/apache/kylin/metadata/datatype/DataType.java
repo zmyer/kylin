@@ -19,6 +19,7 @@
 package org.apache.kylin.metadata.datatype;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,8 +32,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.BytesSerializer;
 import org.apache.kylin.common.util.BytesUtil;
+import org.apache.kylin.common.util.DateFormat;
 import org.apache.kylin.measure.MeasureTypeFactory;
 import org.apache.kylin.metadata.model.TblColRef.InnerDataTypeEnum;
 
@@ -42,8 +45,10 @@ import org.apache.kylin.metadata.model.TblColRef.InnerDataTypeEnum;
 public class DataType implements Serializable {
 
     private static final LinkedHashSet<String> VALID_TYPES = new LinkedHashSet<String>();
+    private static final LinkedHashSet<String> COMPLEX_TYPES = new LinkedHashSet<String>();
 
     private static Pattern TYPE_PATTERN = null;
+    private static Pattern COMPLEX_TYPE_PATTERN = null;
     private static final String TYPE_PATTEN_TAIL = "\\s*" //
             + "(?:" + "[(]" + "([\\d\\s,]+)" + "[)]" + ")?";
 
@@ -58,15 +63,27 @@ public class DataType implements Serializable {
                 Pattern.CASE_INSENSITIVE);
     }
 
-    // standard sql types, ref: http://www.w3schools.com/sql/sql_datatypes_general.asp
+    public static synchronized void registerComplex(String... typeNames) {
+        for (String typeName : typeNames) {
+            COMPLEX_TYPES.add(typeName);
+        }
+        COMPLEX_TYPE_PATTERN = Pattern.compile(//
+                "(" + StringUtils.join(COMPLEX_TYPES, "|") + ")" //
+                        + TYPE_PATTEN_TAIL,
+                Pattern.CASE_INSENSITIVE);
+    }
+
     static {
+        // standard sql types, ref: http://www.w3schools.com/sql/sql_datatypes_general.asp
         register("any", "char", "varchar", "string", //
                 "boolean", "byte", "binary", //
                 "int", "short", "long", "integer", "tinyint", "smallint", "bigint", //
-                "int4", "long8", //
+                "int4", "long8", // for test only
                 "float", "real", "double", "decimal", "numeric", //
                 "date", "time", "datetime", "timestamp", //
                 InnerDataTypeEnum.LITERAL.getDataType(), InnerDataTypeEnum.DERIVED.getDataType());
+
+        registerComplex("array\\<.*\\>");
     }
 
     public static final Set<String> INTEGER_FAMILY = new HashSet<String>();
@@ -114,7 +131,13 @@ public class DataType implements Serializable {
     public static final DataType ANY = DataType.getType("any");
 
     static {
-        MeasureTypeFactory.init();
+        //to ensure the MeasureTypeFactory class has initialized
+        MeasureTypeFactory.getUDAFs();
+    }
+
+    public static boolean isComplexType(DataType type) {
+        Matcher m = COMPLEX_TYPE_PATTERN.matcher(type.getName());
+        return m.matches();
     }
 
     public static DataType getType(String type) {
@@ -147,9 +170,15 @@ public class DataType implements Serializable {
         datatype = replaceLegacy(datatype);
 
         Pattern pattern = TYPE_PATTERN;
+        Pattern complexPattern = COMPLEX_TYPE_PATTERN;
         Matcher m = pattern.matcher(datatype);
-        if (m.matches() == false)
+        Matcher m2 = complexPattern.matcher(datatype);
+        if (m.matches() == false && m2.matches() == false)
             throw new IllegalArgumentException("bad data type -- " + datatype + ", does not match " + pattern);
+
+        if (m2.matches()) {
+            m = m2;
+        }
 
         name = replaceLegacy(m.group(1));
         precision = -1;
@@ -163,28 +192,52 @@ public class DataType implements Serializable {
                 try {
                     n = Integer.parseInt(parts[i]);
                 } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("bad data type -- " + datatype + ", precision/scale not numeric");
+                    throw new IllegalArgumentException(
+                            "bad data type -- " + datatype + ", precision/scale not numeric");
                 }
                 if (i == 0)
                     precision = n;
                 else if (i == 1)
                     scale = n;
                 else
-                    throw new IllegalArgumentException("bad data type -- " + datatype + ", too many precision/scale parts");
+                    throw new IllegalArgumentException(
+                            "bad data type -- " + datatype + ", too many precision/scale parts");
             }
         }
 
-        // FIXME 256 for unknown string precision
-        if ((name.equals("char") || name.equals("varchar")) && precision == -1) {
-            precision = 256; // to save memory at frontend, e.g. tableau will
-                             // allocate memory according to this
+        if (precision == -1) {
+            // FIXME 256 for unknown string precision
+
+            // why 256(255) as default? 
+            // to save memory at frontend, e.g. tableau will
+            // allocate memory according to this
+            if (name.equals("char")) {
+                precision = KylinConfig.getInstanceFromEnv().getDefaultCharPrecision();
+            } else if (name.equals("varchar")) {
+                precision = KylinConfig.getInstanceFromEnv().getDefaultVarcharPrecision();
+            } else if ((name.equals("decimal") || name.equals("numeric"))) {
+                precision = KylinConfig.getInstanceFromEnv().getDefaultDecimalPrecision();
+                scale = KylinConfig.getInstanceFromEnv().getDefaultDecimalScale();
+            }
         }
 
-        // FIXME (19,4) for unknown decimal precision
-        if ((name.equals("decimal") || name.equals("numeric")) && precision == -1) {
-            precision = 19;
-            scale = 4;
+    }
+
+    public int compare(String value1, String value2) {
+        if (isDateTimeFamily()) {
+            Long millis1 = DateFormat.stringToMillis(value1);
+            Long millis2 = DateFormat.stringToMillis(value2);
+            return millis1.compareTo(millis2);
+        } else if (isIntegerFamily()) {
+            Long l1 = new Long(value1);
+            Long l2 = new Long(value2);
+            return l1.compareTo(l2);
+        } else if (isNumberFamily()) {
+            BigDecimal bigDecimal1 = new BigDecimal(value1);
+            BigDecimal bigDecimal2 = new BigDecimal(value2);
+            return bigDecimal1.compareTo(bigDecimal2);
         }
+        return value1.compareTo(value2);
     }
 
     private String replaceLegacy(String str) {
@@ -194,6 +247,10 @@ public class DataType implements Serializable {
 
     public int getStorageBytesEstimate() {
         return DataTypeSerializer.create(this).getStorageBytesEstimate();
+    }
+
+    public double getStorageBytesEstimate(double count) {
+        return DataTypeSerializer.create(this).getStorageBytesEstimate(count);
     }
 
     public boolean isStringFamily() {
@@ -210,6 +267,10 @@ public class DataType implements Serializable {
 
     public boolean isDateTimeFamily() {
         return DATETIME_FAMILY.contains(name);
+    }
+
+    public boolean isTimeFamily() {
+        return DATETIME_FAMILY.contains(name) && !isDate();
     }
 
     public boolean isDate() {

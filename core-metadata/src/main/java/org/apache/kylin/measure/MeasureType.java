@@ -18,11 +18,6 @@
 
 package org.apache.kylin.measure;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
 import org.apache.kylin.common.util.Dictionary;
 import org.apache.kylin.metadata.model.FunctionDesc;
 import org.apache.kylin.metadata.model.MeasureDesc;
@@ -32,13 +27,19 @@ import org.apache.kylin.metadata.realization.SQLDigest;
 import org.apache.kylin.metadata.tuple.Tuple;
 import org.apache.kylin.metadata.tuple.TupleInfo;
 
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
 /**
  * MeasureType captures how a kind of aggregation is defined, how it is calculated 
  * during cube build, and how it is involved in query and storage scan.
  * 
- * @param <T> the Java type of aggregation data object, e.g. HyperLogLogPlusCounter
+ * @param <T> the Java type of aggregation data object, e.g. HLLCounter
  */
-abstract public class MeasureType<T> {
+abstract public class MeasureType<T> implements java.io.Serializable {
+    private static final long serialVersionUID = 1L;
 
     /* ============================================================================
      * Define
@@ -102,18 +103,21 @@ abstract public class MeasureType<T> {
      * Query Rewrite
      * ---------------------------------------------------------------------------- */
 
-    // TODO support user defined Calcite aggr function
-
     /** Whether or not Calcite rel-tree needs rewrite to do last around of aggregation */
     abstract public boolean needRewrite();
 
-    /** Does the rewrite involves an extra field for the pre-calculated */
+    /** Does the rewrite involves an extra field to hold the pre-calculated */
     public boolean needRewriteField() {
         return true;
     }
 
-    /** Returns a Calcite aggregation function implementation class */
-    abstract public Class<?> getRewriteCalciteAggrFunctionClass();
+    /**
+     * Returns a map from UDAF to Calcite aggregation function implementation class.
+     * There can be zero or more UDAF defined on a measure type.
+     */
+    public Map<String, Class<?>> getRewriteCalciteAggrFunctions() {
+        return null;
+    }
 
     /* ============================================================================
      * Storage
@@ -124,7 +128,7 @@ abstract public class MeasureType<T> {
      * They need to adjust dimensions and measures in <code>sqlDigest</code> before scanning,
      * such that correct cuboid and measures can be selected by storage.
      */
-    public void adjustSqlDigest(MeasureDesc measureDesc, SQLDigest sqlDigest) {
+    public void adjustSqlDigest(List<MeasureDesc> measureDescs, SQLDigest sqlDigest) {
     }
 
     /** Return true if one storage record maps to multiple tuples, or false otherwise. */

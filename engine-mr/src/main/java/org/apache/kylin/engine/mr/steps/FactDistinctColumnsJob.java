@@ -19,15 +19,19 @@
 package org.apache.kylin.engine.mr.steps;
 
 import java.io.IOException;
-import java.util.List;
 
 import org.apache.commons.cli.Options;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.BytesWritable;
+import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.LazyOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.MultipleOutputs;
 import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.cube.CubeInstance;
@@ -37,7 +41,6 @@ import org.apache.kylin.engine.mr.IMRInput.IMRTableInputFormat;
 import org.apache.kylin.engine.mr.MRUtil;
 import org.apache.kylin.engine.mr.common.AbstractHadoopJob;
 import org.apache.kylin.engine.mr.common.BatchConstants;
-import org.apache.kylin.metadata.model.TblColRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,7 +59,6 @@ public class FactDistinctColumnsJob extends AbstractHadoopJob {
             options.addOption(OPTION_CUBING_JOB_ID);
             options.addOption(OPTION_OUTPUT_PATH);
             options.addOption(OPTION_SEGMENT_ID);
-            options.addOption(OPTION_STATISTICS_ENABLED);
             options.addOption(OPTION_STATISTICS_OUTPUT);
             options.addOption(OPTION_STATISTICS_SAMPLING_PERCENT);
             parseOptions(options, args);
@@ -68,7 +70,6 @@ public class FactDistinctColumnsJob extends AbstractHadoopJob {
             Path output = new Path(getOptionValue(OPTION_OUTPUT_PATH));
 
             String segmentID = getOptionValue(OPTION_SEGMENT_ID);
-            String statistics_enabled = getOptionValue(OPTION_STATISTICS_ENABLED);
             String statistics_output = getOptionValue(OPTION_STATISTICS_OUTPUT);
             String statistics_sampling_percent = getOptionValue(OPTION_STATISTICS_SAMPLING_PERCENT);
 
@@ -76,13 +77,12 @@ public class FactDistinctColumnsJob extends AbstractHadoopJob {
             // add metadata to distributed cache
             CubeManager cubeMgr = CubeManager.getInstance(KylinConfig.getInstanceFromEnv());
             CubeInstance cube = cubeMgr.getCube(cubeName);
-            List<TblColRef> columnsNeedDict = cubeMgr.getAllDictColumnsOnFact(cube.getDescriptor());
 
             job.getConfiguration().set(BatchConstants.CFG_CUBE_NAME, cubeName);
             job.getConfiguration().set(BatchConstants.CFG_CUBE_SEGMENT_ID, segmentID);
-            job.getConfiguration().set(BatchConstants.CFG_STATISTICS_ENABLED, statistics_enabled);
             job.getConfiguration().set(BatchConstants.CFG_STATISTICS_OUTPUT, statistics_output);
             job.getConfiguration().set(BatchConstants.CFG_STATISTICS_SAMPLING_PERCENT, statistics_sampling_percent);
+
             logger.info("Starting: " + job.getJobName());
 
             setJobClasspath(job, cube.getConfig());
@@ -90,27 +90,25 @@ public class FactDistinctColumnsJob extends AbstractHadoopJob {
             CubeSegment segment = cube.getSegmentById(segmentID);
             if (segment == null) {
                 logger.error("Failed to find {} in cube {}", segmentID, cube);
-                System.out.println("Failed to find {} in cube {} " + segmentID + "," + cube);
                 for (CubeSegment s : cube.getSegments()) {
                     logger.error(s.getName() + " with status " + s.getStatus());
-                    System.out.println(s.getName() + " with status " + s.getStatus());
                 }
                 throw new IllegalStateException();
-            } else {
-                logger.info("Found segment: " + segment);
-                System.out.println("Found segment " + segment);
             }
-            setupMapper(cube.getSegmentById(segmentID));
-            setupReducer(output, "true".equalsIgnoreCase(statistics_enabled) ? columnsNeedDict.size() + 1 : columnsNeedDict.size());
 
-            attachKylinPropsAndMetadata(cube, job.getConfiguration());
+            setupMapper(segment);
+            setupReducer(output, segment);
+
+            attachCubeMetadata(cube, job.getConfiguration());
+
+            /**
+             * don't compress the reducer output so that {@link CreateDictionaryJob} and {@link UpdateCubeInfoAfterBuildStep}
+             * could read the reducer file directly
+             */
+            job.getConfiguration().set(BatchConstants.CFG_MAPRED_OUTPUT_COMPRESS, "false");
 
             return waitForCompletion(job);
 
-        } catch (Exception e) {
-            logger.error("error in FactDistinctColumnsJob", e);
-            printUsage(options);
-            throw e;
         } finally {
             if (job != null)
                 cleanupTempConfFile(job.getConfiguration());
@@ -122,22 +120,39 @@ public class FactDistinctColumnsJob extends AbstractHadoopJob {
         IMRTableInputFormat flatTableInputFormat = MRUtil.getBatchCubingInputSide(cubeSeg).getFlatTableInputFormat();
         flatTableInputFormat.configureJob(job);
 
-        job.setMapperClass(FactDistinctHiveColumnsMapper.class);
+        job.setMapperClass(FactDistinctColumnsMapper.class);
         job.setCombinerClass(FactDistinctColumnsCombiner.class);
-        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputKeyClass(SelfDefineSortableKey.class);
         job.setMapOutputValueClass(Text.class);
     }
 
-    private void setupReducer(Path output, int numberOfReducers) throws IOException {
+    private void setupReducer(Path output, CubeSegment cubeSeg)
+            throws IOException {
+        FactDistinctColumnsReducerMapping reducerMapping = new FactDistinctColumnsReducerMapping(cubeSeg.getCubeInstance());
+        int numberOfReducers = reducerMapping.getTotalReducerNum();
+        if (numberOfReducers > 250) {
+            throw new IllegalArgumentException(
+                    "The max reducer number for FactDistinctColumnsJob is 250, but now it is "
+                            + numberOfReducers
+                            + ", decrease 'kylin.engine.mr.uhc-reducer-count'");
+        }
+
         job.setReducerClass(FactDistinctColumnsReducer.class);
-        job.setOutputFormatClass(SequenceFileOutputFormat.class);
-        job.setOutputKeyClass(NullWritable.class);
-        job.setOutputValueClass(Text.class);
         job.setPartitionerClass(FactDistinctColumnPartitioner.class);
         job.setNumReduceTasks(numberOfReducers);
+        job.getConfiguration().setInt(BatchConstants.CFG_HLL_REDUCER_NUM, reducerMapping.getCuboidRowCounterReducerNum());
+
+        // make each reducer output to respective dir
+        MultipleOutputs.addNamedOutput(job, BatchConstants.CFG_OUTPUT_COLUMN, SequenceFileOutputFormat.class, NullWritable.class, Text.class);
+        MultipleOutputs.addNamedOutput(job, BatchConstants.CFG_OUTPUT_DICT, SequenceFileOutputFormat.class, NullWritable.class, BytesWritable.class);
+        MultipleOutputs.addNamedOutput(job, BatchConstants.CFG_OUTPUT_STATISTICS, SequenceFileOutputFormat.class, LongWritable.class, BytesWritable.class);
+        MultipleOutputs.addNamedOutput(job, BatchConstants.CFG_OUTPUT_PARTITION, TextOutputFormat.class, NullWritable.class, LongWritable.class);
 
         FileOutputFormat.setOutputPath(job, output);
         job.getConfiguration().set(BatchConstants.CFG_OUTPUT_PATH, output.toString());
+
+        // prevent to create zero-sized default output
+        LazyOutputFormat.setOutputFormatClass(job, SequenceFileOutputFormat.class);
 
         deletePath(job.getConfiguration(), output);
     }

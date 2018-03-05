@@ -18,19 +18,22 @@
 package org.apache.kylin.source.hive;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.Charset;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
-import org.apache.commons.io.IOUtils;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.ContentSummary;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.kylin.common.KylinConfig;
-import org.apache.kylin.common.util.BufferedLogger;
+import org.apache.kylin.common.util.HiveCmdBuilder;
 import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
-import org.apache.kylin.engine.mr.HadoopUtil;
 import org.apache.kylin.engine.mr.steps.CubingExecutableUtil;
+import org.apache.kylin.job.common.PatternedLogger;
+import org.apache.kylin.job.constant.ExecutableConstants;
 import org.apache.kylin.job.exception.ExecuteException;
 import org.apache.kylin.job.execution.AbstractExecutable;
 import org.apache.kylin.job.execution.ExecutableContext;
@@ -43,51 +46,43 @@ import org.slf4j.LoggerFactory;
 public class CreateFlatHiveTableStep extends AbstractExecutable {
 
     private static final Logger logger = LoggerFactory.getLogger(CreateFlatHiveTableStep.class);
-    private final BufferedLogger stepLogger = new BufferedLogger(logger);
+    protected final PatternedLogger stepLogger = new PatternedLogger(logger);
+    private static final Pattern HDFS_LOCATION = Pattern.compile("LOCATION \'(.*)\';");
 
-    private long readRowCountFromFile() throws IOException {
-        Path rowCountFile = new Path(getRowCountOutputDir(), "000000_0");
-
-        FileSystem fs = FileSystem.get(rowCountFile.toUri(), HadoopUtil.getCurrentConfiguration());
-        InputStream in = fs.open(rowCountFile);
-        try {
-            String content = IOUtils.toString(in, Charset.defaultCharset());
-            return Long.valueOf(content.trim()); // strip the '\n' character
-
-        } finally {
-            IOUtils.closeQuietly(in);
-        }
-    }
-
-    private int determineNumReducer(KylinConfig config, long rowCount) throws IOException {
-        int mapperInputRows = config.getHadoopJobMapperInputRows();
-
-        int numReducers = Math.round(rowCount / ((float) mapperInputRows));
-        numReducers = Math.max(numReducers, config.getHadoopJobMinReducerNumber());
-        numReducers = Math.min(numReducers, config.getHadoopJobMaxReducerNumber());
-
-        stepLogger.log("total input rows = " + rowCount);
-        stepLogger.log("expected input rows per mapper = " + mapperInputRows);
-        stepLogger.log("reducers for RedistributeFlatHiveTableStep = " + numReducers);
-
-        return numReducers;
-    }
-
-    private void createFlatHiveTable(KylinConfig config, int numReducers) throws IOException {
+    protected void createFlatHiveTable(KylinConfig config) throws IOException {
         final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
+        hiveCmdBuilder.overwriteHiveProps(config.getHiveConfigOverride());
         hiveCmdBuilder.addStatement(getInitStatement());
-        hiveCmdBuilder.addStatement("set mapreduce.job.reduces=" + numReducers + ";\n");
-        hiveCmdBuilder.addStatement("set hive.merge.mapredfiles=false;\n"); //disable merge
-        hiveCmdBuilder.addStatement(getCreateTableStatement());
+        hiveCmdBuilder.addStatementWithRedistributeBy(getCreateTableStatement());
         final String cmd = hiveCmdBuilder.toString();
 
         stepLogger.log("Create and distribute table, cmd: ");
         stepLogger.log(cmd);
 
         Pair<Integer, String> response = config.getCliCommandExecutor().execute(cmd, stepLogger);
+        Map<String, String> info = stepLogger.getInfo();
+
+        //get the flat Hive table size
+        Matcher matcher = HDFS_LOCATION.matcher(cmd);
+        if (matcher.find()) {
+            String hiveFlatTableHdfsUrl = matcher.group(1);
+            long size = getFileSize(hiveFlatTableHdfsUrl);
+            info.put(ExecutableConstants.HDFS_BYTES_WRITTEN, "" + size);
+            logger.info("HDFS_Bytes_Writen: " + size);
+        }
+        getManager().addJobInfo(getId(), info);
         if (response.getFirst() != 0) {
             throw new RuntimeException("Failed to create flat hive table, error code " + response.getFirst());
         }
+    }
+
+    private long getFileSize(String hdfsUrl) throws IOException {
+        Configuration configuration = new Configuration();
+        Path path = new Path(hdfsUrl);
+        FileSystem fs = path.getFileSystem(configuration);
+        ContentSummary contentSummary = fs.getContentSummary(path);
+        long length = contentSummary.getLength();
+        return length;
     }
 
     private KylinConfig getCubeSpecificConfig() {
@@ -101,19 +96,12 @@ public class CreateFlatHiveTableStep extends AbstractExecutable {
     protected ExecuteResult doWork(ExecutableContext context) throws ExecuteException {
         KylinConfig config = getCubeSpecificConfig();
         try {
-            long rowCount = readRowCountFromFile();
-            if (!config.isEmptySegmentAllowed() && rowCount == 0) {
-                stepLogger.log("Detect upstream hive table is empty, " + "fail the job because \"kylin.job.allow.empty.segment\" = \"false\"");
-                return new ExecuteResult(ExecuteResult.State.ERROR, stepLogger.getBufferedLog());
-            }
-
-            int numReducers = determineNumReducer(config, rowCount);
-            createFlatHiveTable(config, numReducers);
+            createFlatHiveTable(config);
             return new ExecuteResult(ExecuteResult.State.SUCCEED, stepLogger.getBufferedLog());
 
         } catch (Exception e) {
             logger.error("job:" + getId() + " execute finished with exception", e);
-            return new ExecuteResult(ExecuteResult.State.ERROR, stepLogger.getBufferedLog());
+            return new ExecuteResult(ExecuteResult.State.ERROR, stepLogger.getBufferedLog(), e);
         }
     }
 
@@ -133,11 +121,4 @@ public class CreateFlatHiveTableStep extends AbstractExecutable {
         return getParam("HiveRedistributeData");
     }
 
-    public void setRowCountOutputDir(String rowCountOutputDir) {
-        setParam("rowCountOutputDir", rowCountOutputDir);
-    }
-
-    public String getRowCountOutputDir() {
-        return getParam("rowCountOutputDir");
-    }
 }

@@ -18,42 +18,17 @@
 
 package org.apache.kylin.rest.service;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.charset.Charset;
-import java.util.List;
-import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
-import javax.annotation.PostConstruct;
-import javax.sql.DataSource;
-
-import org.apache.calcite.jdbc.Driver;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.kylin.common.KylinConfig;
-import org.apache.kylin.common.restclient.Broadcaster;
-import org.apache.kylin.cube.CubeDescManager;
-import org.apache.kylin.cube.CubeInstance;
-import org.apache.kylin.cube.CubeManager;
-import org.apache.kylin.dict.DictionaryManager;
-import org.apache.kylin.engine.streaming.StreamingManager;
-import org.apache.kylin.metadata.MetadataManager;
-import org.apache.kylin.metadata.project.ProjectInstance;
-import org.apache.kylin.metadata.project.ProjectManager;
-import org.apache.kylin.metadata.realization.RealizationRegistry;
-import org.apache.kylin.metadata.realization.RealizationType;
-import org.apache.kylin.query.enumerator.OLAPQuery;
-import org.apache.kylin.query.schema.OLAPSchemaFactory;
-import org.apache.kylin.rest.controller.QueryController;
-import org.apache.kylin.source.kafka.KafkaConfigManager;
+import java.util.Map;
+import org.apache.kylin.metadata.cachesync.Broadcaster;
+import org.apache.kylin.metadata.cachesync.Broadcaster.Event;
 import org.apache.kylin.storage.hbase.HBaseConnection;
-import org.apache.kylin.storage.hybrid.HybridManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import net.sf.ehcache.CacheManager;
@@ -61,52 +36,92 @@ import net.sf.ehcache.CacheManager;
 /**
  */
 @Component("cacheService")
-public class CacheService extends BasicService {
+public class CacheService extends BasicService implements InitializingBean {
 
     private static final Logger logger = LoggerFactory.getLogger(CacheService.class);
 
-    private static ConcurrentMap<String, DataSource> olapDataSources = new ConcurrentHashMap<String, DataSource>();
-
     @Autowired
+    @Qualifier("cubeMgmtService")
     private CubeService cubeService;
 
     @Autowired
     private CacheManager cacheManager;
 
-    @PostConstruct
-    public void initCubeChangeListener() throws IOException {
-        CubeManager cubeMgr = CubeManager.getInstance(getConfig());
-        cubeMgr.setCubeChangeListener(new CubeManager.CubeChangeListener() {
+    private Broadcaster.Listener cacheSyncListener = new Broadcaster.Listener() {
+        @Override
+        public void onClearAll(Broadcaster broadcaster) throws IOException {
+            cleanAllDataCache();
+            HBaseConnection.clearConnCache(); // take the chance to clear HBase connection cache as well
+        }
 
-            @Override
-            public void afterCubeCreate(CubeInstance cube) {
-                // no cache need change
-            }
+        @Override
+        public void onProjectSchemaChange(Broadcaster broadcaster, String project) throws IOException {
+            cleanDataCache(project);
+        }
 
-            @Override
-            public void afterCubeUpdate(CubeInstance cube) {
-                rebuildCubeCache(cube.getName());
-            }
+        @Override
+        public void onProjectDataChange(Broadcaster broadcaster, String project) throws IOException {
+            cleanDataCache(project);
+        }
 
-            @Override
-            public void afterCubeDelete(CubeInstance cube) {
-                removeCubeCache(cube.getName(), cube);
+        @Override
+        public void onProjectQueryACLChange(Broadcaster broadcaster, String project) throws IOException {
+            cleanDataCache(project);
+        }
+
+        @Override
+        public void onEntityChange(Broadcaster broadcaster, String entity, Event event, String cacheKey)
+                throws IOException {
+            if ("cube".equals(entity) && event == Event.UPDATE) {
+                final String cubeName = cacheKey;
+                new Thread() { // do not block the event broadcast thread
+                    public void run() {
+                        try {
+                            Thread.sleep(1000);
+                            cubeService.updateOnNewSegmentReady(cubeName);
+                        } catch (Throwable ex) {
+                            logger.error("Error in updateOnNewSegmentReady()", ex);
+                        }
+                    }
+                }.start();
             }
-        });
-    }
+        }
+    };
 
     // for test
     public void setCubeService(CubeService cubeService) {
         this.cubeService = cubeService;
     }
 
-    protected void cleanDataCache(String storageUUID) {
+    @Override
+    public void afterPropertiesSet() throws Exception {
+        Broadcaster.getInstance(getConfig()).registerStaticListener(cacheSyncListener, "cube");
+    }
+
+    public void wipeProjectCache(String project) {
+        if (project == null)
+            annouceWipeCache("all", "update", "all");
+        else
+            annouceWipeCache("project", "update", project);
+    }
+
+    public void annouceWipeCache(String entity, String event, String cacheKey) {
+        Broadcaster broadcaster = Broadcaster.getInstance(getConfig());
+        broadcaster.announce(entity, event, cacheKey);
+    }
+
+    public void notifyMetadataChange(String entity, Event event, String cacheKey) throws IOException {
+        Broadcaster broadcaster = Broadcaster.getInstance(getConfig());
+        broadcaster.notifyListener(entity, event, cacheKey);
+    }
+
+    public void cleanDataCache(String project) {
         if (cacheManager != null) {
-            logger.info("cleaning cache for " + storageUUID + " (currently remove all entries)");
-            cacheManager.getCache(QueryController.SUCCESS_QUERY_CACHE).removeAll();
-            cacheManager.getCache(QueryController.EXCEPTION_QUERY_CACHE).removeAll();
+            logger.info("cleaning cache for project " + project + " (currently remove all entries)");
+            cacheManager.getCache(QueryService.SUCCESS_QUERY_CACHE).removeAll();
+            cacheManager.getCache(QueryService.EXCEPTION_QUERY_CACHE).removeAll();
         } else {
-            logger.warn("skip cleaning cache for " + storageUUID);
+            logger.warn("skip cleaning cache for project " + project);
         }
     }
 
@@ -119,174 +134,35 @@ public class CacheService extends BasicService {
         }
     }
 
-    private static void removeOLAPDataSource(String project) {
-        logger.info("removeOLAPDataSource is called for project " + project);
-        if (StringUtils.isEmpty(project))
-            throw new IllegalArgumentException("removeOLAPDataSource: project name not given");
+    public void clearCacheForCubeMigration(String cube, String project, String model, Map<String, String> tableToProjects) throws IOException {
+        //the metadata reloading must be in order
 
-        project = ProjectInstance.getNormalizedProjectName(project);
-        olapDataSources.remove(project);
-    }
-
-    public static void removeAllOLAPDataSources() {
-        // brutal, yet simplest way
-        logger.info("removeAllOLAPDataSources is called.");
-        olapDataSources.clear();
-    }
-
-    public DataSource getOLAPDataSource(String project) {
-
-        project = ProjectInstance.getNormalizedProjectName(project);
-
-        DataSource ret = olapDataSources.get(project);
-        if (ret == null) {
-            logger.debug("Creating a new data source, OLAP data source pointing to " + getConfig());
-            File modelJson = OLAPSchemaFactory.createTempOLAPJson(project, getConfig());
-
-            try {
-                String text = FileUtils.readFileToString(modelJson, Charset.defaultCharset());
-                logger.debug("The new temp olap json is :" + text);
-            } catch (IOException e) {
-                e.printStackTrace(); // logging failure is not critical
-            }
-
-            DriverManagerDataSource ds = new DriverManagerDataSource();
-            Properties props = new Properties();
-            props.setProperty(OLAPQuery.PROP_SCAN_THRESHOLD, String.valueOf(KylinConfig.getInstanceFromEnv().getScanThreshold()));
-            ds.setConnectionProperties(props);
-            ds.setDriverClassName(Driver.class.getName());
-            ds.setUrl("jdbc:calcite:model=" + modelJson.getAbsolutePath());
-
-            ret = olapDataSources.putIfAbsent(project, ds);
-            if (ret == null) {
-                ret = ds;
-            }
+        //table must before model
+        for (Map.Entry<String, String> entry : tableToProjects.entrySet()) {
+            //For KYLIN-2717 compatibility, use tableProject not project
+            getTableManager().reloadSourceTableQuietly(entry.getKey(), entry.getValue());
+            getTableManager().reloadTableExtQuietly(entry.getKey(), entry.getValue());
         }
-        return ret;
-    }
+        logger.info("reload table cache done");
 
-    public void rebuildCache(Broadcaster.TYPE cacheType, String cacheKey) {
-        final String log = "rebuild cache type: " + cacheType + " name:" + cacheKey;
-        logger.info(log);
-        try {
-            switch (cacheType) {
-            case CUBE:
-                rebuildCubeCache(cacheKey);
-                break;
-            case STREAMING:
-                getStreamingManager().reloadStreamingConfigLocal(cacheKey);
-                break;
-            case KAFKA:
-                getKafkaManager().reloadKafkaConfigLocal(cacheKey);
-                break;
-            case CUBE_DESC:
-                getCubeDescManager().reloadCubeDescLocal(cacheKey);
-                break;
-            case PROJECT:
-                reloadProjectCache(cacheKey);
-                break;
-            case TABLE:
-                getMetadataManager().reloadTableCache(cacheKey);
-                CubeDescManager.clearCache();
-                break;
-            case EXTERNAL_FILTER:
-                getMetadataManager().reloadExtFilter(cacheKey);
-                CubeDescManager.clearCache();
-                break;
-            case DATA_MODEL:
-                getMetadataManager().reloadDataModelDesc(cacheKey);
-                CubeDescManager.clearCache();
-                break;
-            case ALL:
-                DictionaryManager.clearCache();
-                MetadataManager.clearCache();
-                CubeDescManager.clearCache();
-                CubeManager.clearCache();
-                HybridManager.clearCache();
-                RealizationRegistry.clearCache();
-                ProjectManager.clearCache();
-                KafkaConfigManager.clearCache();
-                StreamingManager.clearCache();
-                HBaseConnection.clearConnCache();
+        //ProjectInstance cache must before cube and model cache, as the new cubeDesc init and model reloading relays on latest ProjectInstance cache
+        getProjectManager().reloadProjectQuietly(project);
+        logger.info("reload project cache done");
 
-                cleanAllDataCache();
-                removeAllOLAPDataSources();
-                break;
-            default:
-                throw new RuntimeException("invalid cacheType:" + cacheType);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("error " + log, e);
-        }
-    }
+        //model must before cube desc
+        getDataModelManager().reloadDataModel(model);
+        logger.info("reload model cache done");
 
-    private void rebuildCubeCache(String cubeName) {
-        CubeInstance cube = getCubeManager().reloadCubeLocal(cubeName);
-        getHybridManager().reloadHybridInstanceByChild(RealizationType.CUBE, cubeName);
-        reloadProjectCache(getProjectManager().findProjects(RealizationType.CUBE, cubeName));
-        //clean query related cache first
-        if (cube != null) {
-            cleanDataCache(cube.getUuid());
-        }
-        cubeService.updateOnNewSegmentReady(cubeName);
-    }
+        //cube desc must before cube instance
+        getCubeDescManager().reloadCubeDescLocal(cube);
+        logger.info("reload cubeDesc cache done");
 
-    public void removeCache(Broadcaster.TYPE cacheType, String cacheKey) {
-        final String log = "remove cache type: " + cacheType + " name:" + cacheKey;
-        try {
-            switch (cacheType) {
-            case CUBE:
-                removeCubeCache(cacheKey, null);
-                break;
-            case CUBE_DESC:
-                getCubeDescManager().removeLocalCubeDesc(cacheKey);
-                break;
-            case PROJECT:
-                ProjectManager.clearCache();
-                break;
-            case TABLE:
-                throw new UnsupportedOperationException(log);
-            case EXTERNAL_FILTER:
-                throw new UnsupportedOperationException(log);
-            case DATA_MODEL:
-                getMetadataManager().removeModelCache(cacheKey);
-                break;
-            default:
-                throw new RuntimeException("invalid cacheType:" + cacheType);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("error " + log, e);
-        }
-    }
+        getCubeManager().reloadCubeQuietly(cube);
+        logger.info("reload cube cache done");
 
-    private void removeCubeCache(String cubeName, CubeInstance cube) {
-        // you may not get the cube instance if it's already removed from metadata
-        if (cube == null) {
-            cube = getCubeManager().getCube(cubeName);
-        }
-
-        getCubeManager().removeCubeLocal(cubeName);
-        getHybridManager().reloadHybridInstanceByChild(RealizationType.CUBE, cubeName);
-        reloadProjectCache(getProjectManager().findProjects(RealizationType.CUBE, cubeName));
-
-        if (cube != null) {
-            cleanDataCache(cube.getUuid());
-        }
-    }
-
-    private void reloadProjectCache(List<ProjectInstance> projects) {
-        for (ProjectInstance prj : projects) {
-            reloadProjectCache(prj.getName());
-        }
-    }
-
-    private void reloadProjectCache(String projectName) {
-        try {
-            getProjectManager().reloadProjectLocal(projectName);
-        } catch (IOException ex) {
-            logger.warn("Failed to reset project cache", ex);
-        }
-        removeOLAPDataSource(projectName);
+        //reload project l2cache again after cube cache, because the project L2 cache relay on latest cube cache
+        getProjectManager().reloadProjectL2Cache(project);
+        logger.info("reload project l2cache done");
     }
 
 }

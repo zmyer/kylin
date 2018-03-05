@@ -36,8 +36,8 @@ import com.google.common.collect.Maps;
 /**
  * @author yangli9
  */
+@Deprecated // used by v1 HBase coprocessor
 public class CoprocessorRowType {
-
 
     //for observer
     public static CoprocessorRowType fromCuboid(CubeSegment seg, Cuboid cuboid) {
@@ -73,6 +73,7 @@ public class CoprocessorRowType {
             for (int i = 0; i < n; i++) {
                 BytesUtil.writeAsciiString(o.columns[i].getTable(), out);
                 BytesUtil.writeAsciiString(o.columns[i].getName(), out);
+                BytesUtil.writeAsciiString(o.columns[i].getDatatype(), out);
                 BytesUtil.writeVInt(o.columnSizes[i], out);
             }
         }
@@ -86,11 +87,13 @@ public class CoprocessorRowType {
             for (int i = 0; i < n; i++) {
                 String tableName = BytesUtil.readAsciiString(in);
                 String colName = BytesUtil.readAsciiString(in);
+                String datatype = BytesUtil.readAsciiString(in);
                 TableDesc table = new TableDesc();
                 table.setName(tableName);
                 ColumnDesc col = new ColumnDesc();
                 col.setTable(table);
                 col.setName(colName);
+                col.setDatatype(datatype);
                 col.init(table);
                 cols[i] = col.getRef();
 

@@ -21,6 +21,7 @@ package org.apache.kylin.engine.mr.common;
 import java.io.IOException;
 import java.util.Map;
 
+import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.cube.CubeUpdate;
@@ -37,19 +38,20 @@ public class CuboidShardUtil {
 
         Map<Long, Short> filtered = Maps.newHashMap();
         for (Map.Entry<Long, Short> entry : cuboidShards.entrySet()) {
-            if (entry.getValue() <= 1) {
-                logger.info("Cuboid {} has {} shards, skip saving it as an optimization", entry.getKey(), entry.getValue());
-            } else {
-                logger.info("Cuboid {} has {} shards, saving it", entry.getKey(), entry.getValue());
+            if (entry.getValue() > 1) {
                 filtered.put(entry.getKey(), entry.getValue());
             }
         }
+        
+        // work on copy instead of cached objects
+        CubeInstance cubeCopy = segment.getCubeInstance().latestCopyForWrite();
+        CubeSegment segCopy = cubeCopy.getSegmentById(segment.getUuid());
 
-        segment.setCuboidShardNums(filtered);
-        segment.setTotalShards(totalShards);
+        segCopy.setCuboidShardNums(filtered);
+        segCopy.setTotalShards(totalShards);
 
-        CubeUpdate cubeBuilder = new CubeUpdate(segment.getCubeInstance());
-        cubeBuilder.setToUpdateSegs(segment);
-        cubeManager.updateCube(cubeBuilder);
+        CubeUpdate update = new CubeUpdate(cubeCopy);
+        update.setToUpdateSegs(segCopy);
+        cubeManager.updateCube(update);
     }
 }

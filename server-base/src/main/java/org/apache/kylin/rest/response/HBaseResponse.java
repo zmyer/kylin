@@ -22,11 +22,17 @@ import java.io.Serializable;
 
 public class HBaseResponse implements Serializable {
     private static final long serialVersionUID = 7263557115683263492L;
+    private String segmentName;
+    private String segmentUUID;
+    private String segmentStatus;
     private String tableName;
     private long tableSize;
     private int regionCount;
     private long dateRangeStart;
     private long dateRangeEnd;
+    private long sourceOffsetStart;
+    private long sourceOffsetEnd;
+    private long sourceCount;
 
     public HBaseResponse() {
     }
@@ -104,5 +110,53 @@ public class HBaseResponse implements Serializable {
      */
     public void setDateRangeEnd(long dateRangeEnd) {
         this.dateRangeEnd = dateRangeEnd;
+    }
+
+    public String getSegmentName() {
+        return segmentName;
+    }
+
+    public void setSegmentName(String segmentName) {
+        this.segmentName = segmentName;
+    }
+
+    public String getSegmentUUID() {
+        return segmentUUID;
+    }
+
+    public void setSegmentUUID(String segmentUUID) {
+        this.segmentUUID = segmentUUID;
+    }
+
+    public String getSegmentStatus() {
+        return segmentStatus;
+    }
+
+    public void setSegmentStatus(String segmentStatus) {
+        this.segmentStatus = segmentStatus;
+    }
+
+    public long getSourceOffsetStart() {
+        return sourceOffsetStart;
+    }
+
+    public void setSourceOffsetStart(long sourceOffsetStart) {
+        this.sourceOffsetStart = sourceOffsetStart;
+    }
+
+    public long getSourceOffsetEnd() {
+        return sourceOffsetEnd;
+    }
+
+    public void setSourceOffsetEnd(long sourceOffsetEnd) {
+        this.sourceOffsetEnd = sourceOffsetEnd;
+    }
+
+    public long getSourceCount() {
+        return sourceCount;
+    }
+
+    public void setSourceCount(long sourceCount) {
+        this.sourceCount = sourceCount;
     }
 }

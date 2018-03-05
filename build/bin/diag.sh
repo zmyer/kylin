@@ -17,13 +17,8 @@
 # limitations under the License.
 #
 
-# We should set KYLIN_HOME here for multiple tomcat instances that are on the same node.
-# In addition, we should set a KYLIN_HOME for the global use as normal.
-KYLIN_HOME=`dirname $0`/..
-export KYLIN_HOME=`cd "$KYLIN_HOME"; pwd`
-dir="$KYLIN_HOME/bin"
+source $(cd -P -- "$(dirname -- "$0")" && pwd -P)/header.sh
 
-source ${dir}/check-env.sh
 mkdir -p ${KYLIN_HOME}/logs
 
 tomcat_root=${dir}/../tomcat
@@ -52,19 +47,19 @@ then
     fi
 
     mkdir -p ${KYLIN_HOME}/ext
-    export HBASE_CLASSPATH_PREFIX=${KYLIN_HOME}/conf:${KYLIN_HOME}/lib/*:${KYLIN_HOME}/tool/*:${KYLIN_HOME}/ext/*:${HBASE_CLASSPATH_PREFIX}
+    export HBASE_CLASSPATH_PREFIX=${KYLIN_HOME}/conf:${KYLIN_HOME}/tool/*:${KYLIN_HOME}/ext/*:${HBASE_CLASSPATH_PREFIX}
     export HBASE_CLASSPATH=${HBASE_CLASSPATH}:${hive_dependency}
 
     if [ ${#patient} -eq 36 ]; then
         hbase ${KYLIN_EXTRA_START_OPTS} \
-        -Dlog4j.configuration=kylin-server-log4j.properties \
+        -Dlog4j.configuration=file:${KYLIN_HOME}/conf/kylin-tools-log4j.properties \
         -Dcatalina.home=${tomcat_root} \
         org.apache.kylin.tool.JobDiagnosisInfoCLI \
         -jobId $patient \
         -destDir $destDir || exit 1
     else
         hbase ${KYLIN_EXTRA_START_OPTS} \
-        -Dlog4j.configuration=kylin-server-log4j.properties \
+        -Dlog4j.configuration=file:${KYLIN_HOME}/conf/kylin-tools-log4j.properties \
         -Dcatalina.home=${tomcat_root} \
         org.apache.kylin.tool.DiagnosisInfoCLI \
         -project -all \

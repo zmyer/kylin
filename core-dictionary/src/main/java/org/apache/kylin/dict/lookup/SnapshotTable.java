@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import com.google.common.base.Strings;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.kylin.common.persistence.ResourceStore;
@@ -35,8 +36,9 @@ import org.apache.kylin.common.util.Dictionary;
 import org.apache.kylin.dict.StringBytesConverter;
 import org.apache.kylin.dict.TrieDictionary;
 import org.apache.kylin.dict.TrieDictionaryBuilder;
+import org.apache.kylin.metadata.model.ColumnDesc;
 import org.apache.kylin.metadata.model.TableDesc;
-import org.apache.kylin.source.ReadableTable;
+import org.apache.kylin.source.IReadableTable;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
@@ -47,8 +49,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  */
 @SuppressWarnings("serial")
 @JsonAutoDetect(fieldVisibility = Visibility.NONE, getterVisibility = Visibility.NONE, isGetterVisibility = Visibility.NONE, setterVisibility = Visibility.NONE)
-public class SnapshotTable extends RootPersistentEntity implements ReadableTable {
+public class SnapshotTable extends RootPersistentEntity implements IReadableTable {
 
+    @JsonProperty("tableName")
+    private String tableName;
     @JsonProperty("signature")
     private TableSignature signature;
     @JsonProperty("useDictionary")
@@ -61,12 +65,13 @@ public class SnapshotTable extends RootPersistentEntity implements ReadableTable
     public SnapshotTable() {
     }
 
-    SnapshotTable(ReadableTable table) throws IOException {
+    SnapshotTable(IReadableTable table, String tableName) throws IOException {
+        this.tableName = tableName;
         this.signature = table.getSignature();
         this.useDictionary = true;
     }
 
-    public void takeSnapshot(ReadableTable table, TableDesc tableDesc) throws IOException {
+    public void takeSnapshot(IReadableTable table, TableDesc tableDesc) throws IOException {
         this.signature = table.getSignature();
 
         int maxIndex = tableDesc.getMaxColumnIndex();
@@ -80,8 +85,8 @@ public class SnapshotTable extends RootPersistentEntity implements ReadableTable
                 if (row.length <= maxIndex) {
                     throw new IllegalStateException("Bad hive table row, " + tableDesc + " expect " + (maxIndex + 1) + " columns, but got " + Arrays.toString(row));
                 }
-
-                for (String cell : row) {
+                for (ColumnDesc column : tableDesc.getColumns()) {
+                    String cell = row[column.getZeroBasedIndex()];
                     if (cell != null)
                         b.addValue(cell);
                 }
@@ -97,9 +102,9 @@ public class SnapshotTable extends RootPersistentEntity implements ReadableTable
         try {
             while (reader.next()) {
                 String[] row = reader.getRow();
-                int[] rowIndex = new int[row.length];
-                for (int i = 0; i < row.length; i++) {
-                    rowIndex[i] = dict.getIdFromValue(row[i]);
+                int[] rowIndex = new int[tableDesc.getColumnCount()];
+                for (ColumnDesc column : tableDesc.getColumns()) {
+                    rowIndex[column.getZeroBasedIndex()] = dict.getIdFromValue(row[column.getZeroBasedIndex()]);
                 }
                 allRowIndices.add(rowIndex);
             }
@@ -111,10 +116,18 @@ public class SnapshotTable extends RootPersistentEntity implements ReadableTable
     }
 
     public String getResourcePath() {
-        return ResourceStore.SNAPSHOT_RESOURCE_ROOT + "/" + new File(signature.getPath()).getName() + "/" + uuid + ".snapshot";
+        return getResourceDir() + "/" + uuid + ".snapshot";
     }
 
     public String getResourceDir() {
+        if (Strings.isNullOrEmpty(tableName)) {
+            return getOldResourceDir();
+        } else {
+            return ResourceStore.SNAPSHOT_RESOURCE_ROOT + "/" + tableName;
+        }
+    }
+
+    private String getOldResourceDir() {
         return ResourceStore.SNAPSHOT_RESOURCE_ROOT + "/" + new File(signature.getPath()).getName();
     }
 
@@ -151,6 +164,11 @@ public class SnapshotTable extends RootPersistentEntity implements ReadableTable
         return signature;
     }
 
+    @Override
+    public boolean exists() throws IOException {
+        return true;
+    }
+    
     /**
      * a naive implementation
      *
@@ -269,4 +287,7 @@ public class SnapshotTable extends RootPersistentEntity implements ReadableTable
         }
     }
 
+    public int getRowCount() {
+        return rowIndices.size();
+    }
 }

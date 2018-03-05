@@ -18,13 +18,12 @@
 
 package org.apache.kylin.cube.model;
 
-import java.util.Map;
-
 import org.apache.commons.lang.StringUtils;
 import org.apache.kylin.dimension.DateDimEnc;
 import org.apache.kylin.dimension.DictionaryDimEnc;
 import org.apache.kylin.dimension.DimensionEncoding;
 import org.apache.kylin.dimension.DimensionEncodingFactory;
+import org.apache.kylin.dimension.FixedLenDimEnc;
 import org.apache.kylin.dimension.TimeDimEnc;
 import org.apache.kylin.metadata.datatype.DataType;
 import org.apache.kylin.metadata.model.TblColRef;
@@ -35,18 +34,24 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * @author yangli9
  * 
  */
 @JsonAutoDetect(fieldVisibility = Visibility.NONE, getterVisibility = Visibility.NONE, isGetterVisibility = Visibility.NONE, setterVisibility = Visibility.NONE)
-public class RowKeyColDesc {
+public class RowKeyColDesc implements java.io.Serializable {
+    private static final Logger logger = LoggerFactory.getLogger(RowKeyColDesc.class);
 
     @JsonProperty("column")
     private String column;
     @JsonProperty("encoding")
     private String encoding;
+    @JsonProperty("encoding_version")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    private int encodingVersion = 1;
     @JsonProperty("isShardBy")
     private boolean isShardBy;//usually it is ultra high cardinality column, shard by such column can reduce the agg cache for each shard
     @JsonProperty("index")
@@ -59,31 +64,35 @@ public class RowKeyColDesc {
     private int bitIndex;
     private TblColRef colRef;
 
-    public void init(int index, Map<String, TblColRef> colNameAbbr, CubeDesc cubeDesc) {
-        column = column.toUpperCase();
+    public void init(int index, CubeDesc cubeDesc) {
         bitIndex = index;
-        colRef = colNameAbbr.get(column);
-        if (colRef == null) {
-            throw new IllegalArgumentException("Cannot find rowkey column " + column + " in cube " + cubeDesc);
-        }
+        colRef = cubeDesc.getModel().findColumn(column);
+        column = colRef.getIdentity();
+        Preconditions.checkArgument(colRef != null, "Cannot find rowkey column %s in cube %s", column, cubeDesc);
 
         Preconditions.checkState(StringUtils.isNotEmpty(this.encoding));
         Object[] encodingConf = DimensionEncoding.parseEncodingConf(this.encoding);
         encodingName = (String) encodingConf[0];
         encodingArgs = (String[]) encodingConf[1];
 
-        if (!DimensionEncodingFactory.isVaildEncoding(this.encodingName))
+        if (!DimensionEncodingFactory.isValidEncoding(this.encodingName))
             throw new IllegalArgumentException("Not supported row key col encoding: '" + this.encoding + "'");
 
-        // convert date/time dictionary to DimensionEncoding implicitly, date/time dictionary is deprecated
+        // convert date/time dictionary on date/time column to DimensionEncoding implicitly
+        // however date/time dictionary on varchar column is still required
+        DataType type = colRef.getType();
         if (DictionaryDimEnc.ENCODING_NAME.equals(encodingName)) {
-            DataType type = colRef.getType();
             if (type.isDate()) {
                 encoding = encodingName = DateDimEnc.ENCODING_NAME;
             }
-            if (type.isTime() || type.isTimestamp() || type.isDatetime()) {
+            if (type.isTimeFamily()) {
                 encoding = encodingName = TimeDimEnc.ENCODING_NAME;
             }
+        }
+
+        encodingArgs = DateDimEnc.replaceEncodingArgs(encoding, encodingArgs, encodingName, type);
+        if (encodingName.startsWith(FixedLenDimEnc.ENCODING_NAME) && (type.isIntegerFamily() || type.isNumberFamily())) {
+            logger.warn(colRef + " type is " + type + " and cannot apply fixed_length encoding");
         }
     }
 
@@ -139,9 +148,43 @@ public class RowKeyColDesc {
         this.index = index;
     }
 
+    public int getEncodingVersion() {
+        return encodingVersion;
+    }
+
+    public void setEncodingVersion(int encodingVersion) {
+        this.encodingVersion = encodingVersion;
+    }
+
+    @Override
+    public int hashCode() {
+        final int prime = 31;
+        int result = 1;
+        result = prime * result + ((column == null) ? 0 : column.hashCode());
+        return result;
+    }
+
     @Override
     public String toString() {
         return Objects.toStringHelper(this).add("column", column).add("encoding", encoding).toString();
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+
+        RowKeyColDesc that = (RowKeyColDesc) o;
+
+        if (column != null ? !column.equals(that.column) : that.column != null) {
+            return false;
+        }
+
+        return true;
+    }
 }

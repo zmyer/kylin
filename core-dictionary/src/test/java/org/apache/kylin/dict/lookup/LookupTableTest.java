@@ -27,7 +27,8 @@ import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.DateFormat;
 import org.apache.kylin.common.util.LocalFileMetadataTestCase;
 import org.apache.kylin.common.util.Pair;
-import org.apache.kylin.metadata.MetadataManager;
+import org.apache.kylin.dict.TrieDictionaryForest;
+import org.apache.kylin.metadata.TableMetadataManager;
 import org.apache.kylin.metadata.model.TableDesc;
 import org.junit.After;
 import org.junit.Assert;
@@ -107,19 +108,26 @@ public class LookupTableTest extends LocalFileMetadataTestCase {
         }
     }
 
+    @Test
+    public void testGetClassName(){
+        String name = TrieDictionaryForest.class.getName();
+        System.out.println(name);
+
+    }
+
     private String millis(String dateStr) {
         return String.valueOf(DateFormat.stringToMillis(dateStr));
     }
 
     public LookupTable<String> initLookupTable() throws Exception {
 
-        MetadataManager metaMgr = MetadataManager.getInstance(config);
+        TableMetadataManager metaMgr = TableMetadataManager.getInstance(config);
 
         String tableName = "EDW.TEST_CAL_DT";
         String[] pkCols = new String[] { "CAL_DT" };
         String snapshotResPath = "/table_snapshot/TEST_CAL_DT.csv/4af48c94-86de-4e22-a4fd-c49b06cbaa4f.snapshot";
         SnapshotTable snapshot = getSnapshotManager().getSnapshotTable(snapshotResPath);
-        TableDesc tableDesc = metaMgr.getTableDesc(tableName);
+        TableDesc tableDesc = metaMgr.getTableDesc(tableName, "default");
         LookupTable<String> lt = new LookupStringTable(tableDesc, pkCols, snapshot);
 
         System.out.println(lt);

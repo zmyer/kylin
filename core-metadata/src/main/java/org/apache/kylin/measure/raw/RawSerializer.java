@@ -34,13 +34,11 @@ public class RawSerializer extends DataTypeSerializer<List<ByteArray>> {
     //FIXME to config this and RowConstants.ROWVALUE_BUFFER_SIZE in properties file
     public static final int RAW_BUFFER_SIZE = 1024 * 1024;//1M
 
-    private ThreadLocal<List<ByteArray>> current = new ThreadLocal<>();
-
     public RawSerializer(DataType dataType) {
     }
 
     private List<ByteArray> current() {
-        List<ByteArray> l = current.get();
+        List<ByteArray> l = (List<ByteArray>) current.get();
         if (l == null) {
             l = new ArrayList<ByteArray>();
             current.set(l);
@@ -92,8 +90,7 @@ public class RawSerializer extends DataTypeSerializer<List<ByteArray>> {
 
     @Override
     public List<ByteArray> deserialize(ByteBuffer in) {
-        List<ByteArray> values = current();
-        values.clear();
+        List<ByteArray> values = new ArrayList<>();
         int size = BytesUtil.readVInt(in);
         if (size >= 0) {
             for (int i = 0; i < size; i++) {

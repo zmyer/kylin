@@ -30,14 +30,15 @@ option java_generate_equals_and_hash = true;
 option optimize_for = SPEED;
 
 message CubeVisitRequest {
-    required string behavior = 1;
-    required bytes gtScanRequest = 2;
-    required bytes hbaseRawScan = 3;
-    required int32 rowkeyPreambleSize = 4;
-    repeated IntList hbaseColumnsToGT = 5;
-    required int64 startTime = 6;//when client start the request
-    required int64 timeout = 7;//how long client will wait
-    required string kylinProperties = 8; // kylin properties
+    required bytes gtScanRequest = 1;
+    required bytes hbaseRawScan = 2;
+    required int32 rowkeyPreambleSize = 3;
+    repeated IntList hbaseColumnsToGT = 4;
+    required string kylinProperties = 5; // kylin properties
+    optional string queryId = 6;
+    optional bool spillEnabled = 7 [default = true];
+    optional int64 maxScanBytes = 8; // must be positive
+    optional bool isExactAggregate = 9 [default = false];
     message IntList {
         repeated int32 ints = 1;
     }
@@ -54,10 +55,22 @@ message CubeVisitResponse {
         optional double freeSwapSpaceSize = 7;
         optional string hostname = 8;
         optional string etcMsg = 9;
-        optional int32 normalComplete =10;//when time outs, normalComplete will be false
+        optional int32 normalComplete =10;
+        optional int64 scannedBytes = 11;
+        optional int64 filteredRowCount = 12;
+    }
+    enum ErrorType {
+        UNKNOWN_TYPE = 0;
+        TIMEOUT = 1;
+        RESOURCE_LIMIT_EXCEEDED = 2;
+    }
+    message ErrorInfo {
+        required ErrorType type = 1;
+        required string message = 2;
     }
     required bytes compressedRows = 1;
     required Stats stats = 2;
+    optional ErrorInfo errorInfo = 3; // should be set when stats.normalComplete == false
 }
 
 service CubeVisitService {

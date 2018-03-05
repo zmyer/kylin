@@ -121,12 +121,18 @@ RETCODE SQL_API _SQLExecStmtFromReq ( pODBCStmt pStmt, bool pPrepared ) {
     __ODBCLOG ( _ODBCLogMsg ( LogLevel_INFO, "================================================================" ) );
     __ODBCLOG ( _ODBCLogMsg ( LogLevel_INFO, "start exec the query: " ) );
     __ODBCLOG ( _ODBCLogMsg ( LogLevel_INFO, pStmt->Stmt ) );
+
     std::unique_ptr<SQLResponse> p;
-    
+	wstring response;
+    int status;
+
     try {
-        p = restQuery ( pStmt->Stmt, pStmt->Conn->Server, pStmt->Conn->ServerPort, pStmt->Conn->UserName, pStmt->Conn->Password,
-                        pStmt->Conn->Project );
-        __ODBCLOG ( _ODBCLogMsg ( LogLevel_DEBUG, "The REST request succeed" ) );
+        __ODBCLOG ( _ODBCLogMsg ( LogLevel_DEBUG, "start to call rest api" ) );
+		response = requestQuery ( pStmt->Stmt, pStmt->Conn->Server, pStmt->Conn->ServerPort, pStmt->Conn->UserName, pStmt->Conn->Password,
+                        pStmt->Conn->Project, pPrepared, &status );
+        __ODBCLOG ( _ODBCLogMsg ( LogLevel_DEBUG, "received and uncompressed rest response:" ) );
+		p = convertToSQLResponse(status, response);
+        __ODBCLOG ( _ODBCLogMsg ( LogLevel_DEBUG, "parsed to SQLResponse" ) );
     }
     
     catch ( const exception& e ) {
@@ -201,7 +207,7 @@ RETCODE SQL_API SQLPrepareW ( SQLHSTMT    pStmt,
     ( ( pODBCStmt ) pStmt )->Prepared = 1;
 
 
-	return _SQLExecStmtFromReq((pODBCStmt)pStmt,1);
+	return _SQLExecStmtFromReq((pODBCStmt)pStmt, 1);
 
     //return SQL_SUCCESS;
 }
@@ -224,7 +230,7 @@ RETCODE SQL_API SQLExecute ( HSTMT pStmt ) {
     }
     
     // excute the request
-    x  = _SQLExecStmtFromReq ( ( pODBCStmt ) pStmt, 1 );
+    x  = _SQLExecStmtFromReq ( ( pODBCStmt ) pStmt, 0 );
     return x;
 }
 

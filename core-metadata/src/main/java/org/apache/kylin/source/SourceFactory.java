@@ -19,7 +19,6 @@
 package org.apache.kylin.source;
 
 import java.util.List;
-import java.util.Map;
 
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.ImplementationSwitch;
@@ -28,26 +27,36 @@ import org.apache.kylin.metadata.model.TableDesc;
 
 public class SourceFactory {
 
-    private static ImplementationSwitch<ISource> sources;
-    static {
-        Map<Integer, String> impls = KylinConfig.getInstanceFromEnv().getSourceEngines();
-        sources = new ImplementationSwitch<ISource>(impls, ISource.class);
+    // Use thread-local because KylinConfig can be thread-local and implementation might be different among multiple threads.
+    private static ThreadLocal<ImplementationSwitch<ISource>> sources = new ThreadLocal<>();
+
+    private static ISource getSource(int sourceType) {
+        ImplementationSwitch<ISource> current = sources.get();
+        if (current == null) {
+            current = new ImplementationSwitch<>(KylinConfig.getInstanceFromEnv().getSourceEngines(), ISource.class);
+            sources.set(current);
+        }
+        return current.get(sourceType);
     }
 
-    public static ISource tableSource(ISourceAware aware) {
-        return sources.get(aware.getSourceType());
+    public static ISource getDefaultSource() {
+        return getSource(KylinConfig.getInstanceFromEnv().getDefaultSource());
     }
 
-    public static ReadableTable createReadableTable(TableDesc table) {
-        return tableSource(table).createReadableTable(table);
+    public static ISource getSource(ISourceAware aware) {
+        return getSource(aware.getSourceType());
+    }
+
+    public static IReadableTable createReadableTable(TableDesc table) {
+        return getSource(table).createReadableTable(table);
     }
 
     public static <T> T createEngineAdapter(ISourceAware table, Class<T> engineInterface) {
-        return tableSource(table).adaptToBuildEngine(engineInterface);
+        return getSource(table).adaptToBuildEngine(engineInterface);
     }
 
     public static List<String> getMRDependentResources(TableDesc table) {
-        return tableSource(table).getMRDependentResources(table);
+        return getSource(table).getSourceMetadataExplorer().getRelatedKylinResources(table);
     }
 
 }

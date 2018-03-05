@@ -29,6 +29,8 @@ public interface BatchConstants {
      * ConFiGuration entry names for MR jobs
      */
 
+    String CFG_UPDATE_SHARD = "update.shard";
+    String CFG_CUBOID_MODE = "cuboid.mode";
     String CFG_CUBE_NAME = "cube.name";
     String CFG_CUBE_SEGMENT_NAME = "cube.segment.name";
     String CFG_CUBE_SEGMENT_ID = "cube.segment.id";
@@ -38,6 +40,7 @@ public interface BatchConstants {
     String CFG_II_SEGMENT_NAME = "ii.segment.name";
 
     String CFG_OUTPUT_PATH = "output.path";
+    String CFG_PROJECT_NAME = "project.name";
     String CFG_TABLE_NAME = "table.name";
     String CFG_IS_MERGE = "is.merge";
     String CFG_CUBE_INTERMEDIATE_TABLE_ROW_DELIMITER = "cube.intermediate.table.row.delimiter";
@@ -45,6 +48,8 @@ public interface BatchConstants {
     String CFG_REGION_NUMBER_MAX = "region.number.max";
     String CFG_REGION_SPLIT_SIZE = "region.split.size";
     String CFG_HFILE_SIZE_GB = "hfile.size.gb";
+    String CFG_STATS_JOB_ID = "stats.job.id";
+    String CFG_STATS_JOB_FREQUENCY = "stats.sample.frequency";
 
     String CFG_KYLIN_LOCAL_TEMP_DIR = "/tmp/kylin/";
     String CFG_KYLIN_HDFS_TEMP_DIR = "/tmp/kylin/";
@@ -53,14 +58,28 @@ public interface BatchConstants {
     String CFG_STATISTICS_ENABLED = "statistics.enabled";
     String CFG_STATISTICS_OUTPUT = "statistics.ouput";//spell error, for compatibility issue better not change it
     String CFG_STATISTICS_SAMPLING_PERCENT = "statistics.sampling.percent";
-    String CFG_STATISTICS_CUBE_ESTIMATION_FILENAME = "cube_statistics.txt";
     String CFG_STATISTICS_CUBOID_ESTIMATION_FILENAME = "cuboid_statistics.seq";
+
+    String CFG_MAPRED_OUTPUT_COMPRESS = "mapred.output.compress";
+
+    String CFG_OUTPUT_COLUMN = "column";
+    String CFG_OUTPUT_DICT = "dict";
+    String CFG_OUTPUT_STATISTICS = "statistics";
+    String CFG_OUTPUT_PARTITION = "partition";
+    String CFG_MR_SPARK_JOB = "mr.spark.job";
+    String CFG_SPARK_META_URL = "spark.meta.url";
+    String CFG_GLOBAL_DICT_BASE_DIR = "global.dict.base.dir";
+
+    String CFG_HLL_REDUCER_NUM = "cuboidHLLCounterReducerNum";
 
     /**
      * command line ARGuments
      */
     String ARG_INPUT = "input";
     String ARG_OUTPUT = "output";
+    String ARG_PROJECT = "project";
+    String ARG_CUBOID_MODE = "cuboidMode";
+    String ARG_UPDATE_SHARD = "updateShard"; // indicate if need update base cuboid shard
     String ARG_JOB_NAME = "jobname";
     String ARG_CUBING_JOB_ID = "cubingJobId";
     String ARG_CUBE_NAME = "cubename";
@@ -74,11 +93,17 @@ public interface BatchConstants {
     String ARG_HTABLE_NAME = "htablename";
     String ARG_INPUT_FORMAT = "inputformat";
     String ARG_LEVEL = "level";
+    String ARG_CONF = "conf";
+    String ARG_DICT_PATH = "dictPath";
 
     /**
      * logger and counter
      */
     String MAPREDUCE_COUNTER_GROUP_NAME = "Cube Builder";
     int NORMAL_RECORD_LOG_THRESHOLD = 100000;
-    int ERROR_RECORD_LOG_THRESHOLD = 100;
+
+    /**
+     * dictionaries builder class
+     */
+    String GLOBAL_DICTIONNARY_CLASS = "org.apache.kylin.dict.GlobalDictionaryBuilder";
 }

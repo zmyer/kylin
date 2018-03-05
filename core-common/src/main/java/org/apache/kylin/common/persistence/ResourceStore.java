@@ -18,25 +18,41 @@
 
 package org.apache.kylin.common.persistence;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.NavigableSet;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.common.StorageURL;
 import org.apache.kylin.common.util.ClassUtil;
+import org.apache.kylin.common.util.OptionsHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Lists;
 
+/**
+ * A general purpose resource store to persist small metadata, like JSON files.
+ * 
+ * In additional to raw bytes save and load, the store takes special care for concurrent modifications
+ * by using a timestamp based test-and-set mechanism to detect (and refuse) dirty writes.
+ */
 abstract public class ResourceStore {
 
     private static final Logger logger = LoggerFactory.getLogger(ResourceStore.class);
@@ -48,6 +64,7 @@ abstract public class ResourceStore {
     public static final String PROJECT_RESOURCE_ROOT = "/project";
     public static final String SNAPSHOT_RESOURCE_ROOT = "/table_snapshot";
     public static final String TABLE_EXD_RESOURCE_ROOT = "/table_exd";
+    public static final String TEMP_STATMENT_RESOURCE_ROOT = "/temp_statement";
     public static final String TABLE_RESOURCE_ROOT = "/table";
     public static final String EXTERNAL_FILTER_RESOURCE_ROOT = "/ext_filter";
     public static final String HYBRID_RESOURCE_ROOT = "/hybrid";
@@ -58,37 +75,26 @@ abstract public class ResourceStore {
     public static final String STREAMING_OUTPUT_RESOURCE_ROOT = "/streaming_output";
     public static final String CUBE_STATISTICS_ROOT = "/cube_statistics";
     public static final String BAD_QUERY_RESOURCE_ROOT = "/bad_query";
+    public static final String DRAFT_RESOURCE_ROOT = "/draft";
 
-    private static final ConcurrentHashMap<KylinConfig, ResourceStore> CACHE = new ConcurrentHashMap<KylinConfig, ResourceStore>();
+    public static final String METASTORE_UUID_TAG = "/UUID";
 
-    private static final ArrayList<Class<? extends ResourceStore>> knownImpl = new ArrayList<Class<? extends ResourceStore>>();
-
-    private static ArrayList<Class<? extends ResourceStore>> getKnownImpl() {
-        if (knownImpl.isEmpty()) {
-            knownImpl.add(FileResourceStore.class);
-            try {
-                knownImpl.add(ClassUtil.forName("org.apache.kylin.storage.hbase.HBaseResourceStore", ResourceStore.class));
-            } catch (Throwable e) {
-                logger.warn("Failed to load HBaseResourceStore impl class: " + e.toString());
-            }
-        }
-        return knownImpl;
-    }
+    private static final ConcurrentMap<KylinConfig, ResourceStore> CACHE = new ConcurrentHashMap<>();
 
     private static ResourceStore createResourceStore(KylinConfig kylinConfig) {
-        List<Throwable> es = new ArrayList<Throwable>();
-        logger.info("Using metadata url " + kylinConfig.getMetadataUrl() + " for resource store");
-        for (Class<? extends ResourceStore> cls : getKnownImpl()) {
-            try {
-                return cls.getConstructor(KylinConfig.class).newInstance(kylinConfig);
-            } catch (Throwable e) {
-                es.add(e);
+        StorageURL metadataUrl = kylinConfig.getMetadataUrl();
+        logger.info("Using metadata url " + metadataUrl + " for resource store");
+        String clsName = kylinConfig.getResourceStoreImpls().get(metadataUrl.getScheme());
+        try {
+            Class<? extends ResourceStore> cls = ClassUtil.forName(clsName, ResourceStore.class);
+            ResourceStore store = cls.getConstructor(KylinConfig.class).newInstance(kylinConfig);
+            if (!store.exists(METASTORE_UUID_TAG)) {
+                store.putResource(METASTORE_UUID_TAG, new StringEntity(store.createMetaStoreUUID()), 0, StringEntity.serializer);
             }
+            return store;
+        } catch (Throwable e) {
+            throw new IllegalArgumentException("Failed to find metadata store by url: " + metadataUrl, e);
         }
-        for (Throwable exceptionOrError : es) {
-            logger.error("Create new store instance failed ", exceptionOrError);
-        }
-        throw new IllegalArgumentException("Failed to find metadata store by url: " + kylinConfig.getMetadataUrl());
     }
 
     public static ResourceStore getStore(KylinConfig kylinConfig) {
@@ -109,8 +115,12 @@ abstract public class ResourceStore {
 
     final protected KylinConfig kylinConfig;
 
-    public ResourceStore(KylinConfig kylinConfig) {
+    protected ResourceStore(KylinConfig kylinConfig) {
         this.kylinConfig = kylinConfig;
+    }
+    
+    final public KylinConfig getConfig() {
+        return kylinConfig;
     }
 
     /**
@@ -118,10 +128,33 @@ abstract public class ResourceStore {
      */
     final public NavigableSet<String> listResources(String folderPath) throws IOException {
         String path = norm(folderPath);
-        return listResourcesImpl(path);
+        return listResourcesImpl(path, false);
     }
 
-    abstract protected NavigableSet<String> listResourcesImpl(String folderPath) throws IOException;
+    /**
+     * List resources and its full path, only support HBase now.
+     */
+    final public NavigableSet<String> listResourcesRecursively(String folderPath) throws IOException {
+        String path = norm(folderPath);
+        return listResourcesImpl(path, true);
+    }
+
+    /**
+     * return null if given path is not a folder or not exists
+     */
+    abstract protected NavigableSet<String> listResourcesImpl(String folderPath, boolean recursive) throws IOException;
+
+    protected String createMetaStoreUUID() throws IOException {
+        return UUID.randomUUID().toString();
+    }
+
+    public String getMetaStoreUUID() throws IOException {
+        if (!exists(ResourceStore.METASTORE_UUID_TAG)) {
+            putResource(ResourceStore.METASTORE_UUID_TAG, new StringEntity(createMetaStoreUUID()), 0, StringEntity.serializer);
+        }
+        StringEntity entity = getResource(ResourceStore.METASTORE_UUID_TAG, StringEntity.class, StringEntity.serializer);
+        return entity.toString();
+    }
 
     /**
      * Return true if a resource exists, return false in case of folder or non-exist
@@ -133,7 +166,7 @@ abstract public class ResourceStore {
     abstract protected boolean existsImpl(String resPath) throws IOException;
 
     /**
-     * Read a resource, return null in case of not found or is a folder
+     * Read a resource, return null in case of not found or is a folder.
      */
     final public <T extends RootPersistentEntity> T getResource(String resPath, Class<T> clz, Serializer<T> serializer) throws IOException {
         resPath = norm(resPath);
@@ -161,14 +194,14 @@ abstract public class ResourceStore {
     }
 
     /**
-     * Read all resources under a folder. Return empty list if folder not exist. 
+     * Read all resources under a folder. Return empty list if folder not exist.
      */
     final public <T extends RootPersistentEntity> List<T> getAllResources(String folderPath, Class<T> clazz, Serializer<T> serializer) throws IOException {
         return getAllResources(folderPath, Long.MIN_VALUE, Long.MAX_VALUE, clazz, serializer);
     }
 
     /**
-     * Read all resources under a folder having last modified time between given range. Return empty list if folder not exist. 
+     * Read all resources under a folder having last modified time between given range. Return empty list if folder not exist.
      */
     final public <T extends RootPersistentEntity> List<T> getAllResources(String folderPath, long timeStart, long timeEndExclusive, Class<T> clazz, Serializer<T> serializer) throws IOException {
         final List<RawResource> allResources = getAllResourcesImpl(folderPath, timeStart, timeEndExclusive);
@@ -191,20 +224,49 @@ abstract public class ResourceStore {
         }
     }
 
+    /**
+     * return empty list if given path is not a folder or not exists
+     */
     abstract protected List<RawResource> getAllResourcesImpl(String folderPath, long timeStart, long timeEndExclusive) throws IOException;
 
-    /** returns null if not exists */
+    /**
+     * returns null if not exists
+     */
     abstract protected RawResource getResourceImpl(String resPath) throws IOException;
 
-    /** returns 0 if not exists */
+    /**
+     * returns 0 if not exists
+     */
     abstract protected long getResourceTimestampImpl(String resPath) throws IOException;
+
+    /**
+     * overwrite a resource without write conflict check
+     */
+    final public <T extends RootPersistentEntity> void putResourceWithoutCheck(String resPath, T obj, long ts,
+            Serializer<T> serializer) throws IOException {
+        resPath = norm(resPath);
+        logger.trace("Directly saving resource " + resPath + " (Store " + kylinConfig.getMetadataUrl() + ")");
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        DataOutputStream dout = new DataOutputStream(buf);
+        serializer.serialize(obj, dout);
+        dout.close();
+        buf.close();
+        ByteArrayInputStream is = new ByteArrayInputStream(buf.toByteArray());
+        putResourceCheckpoint(resPath, is, ts);
+        is.close();
+    }
 
     /**
      * overwrite a resource without write conflict check
      */
     final public void putResource(String resPath, InputStream content, long ts) throws IOException {
         resPath = norm(resPath);
-        logger.debug("Directly saving resource " + resPath + " (Store " + kylinConfig.getMetadataUrl() + ")");
+        logger.trace("Directly saving resource " + resPath + " (Store " + kylinConfig.getMetadataUrl() + ")");
+        putResourceCheckpoint(resPath, content, ts);
+    }
+
+    private void putResourceCheckpoint(String resPath, InputStream content, long ts) throws IOException {
+        beforeChange(resPath);
         putResourceImpl(resPath, content, ts);
     }
 
@@ -234,7 +296,7 @@ abstract public class ResourceStore {
             dout.close();
             buf.close();
 
-            newTS = checkAndPutResourceImpl(resPath, buf.toByteArray(), oldTS, newTS);
+            newTS = checkAndPutResourceCheckpoint(resPath, buf.toByteArray(), oldTS, newTS);
             obj.setLastModified(newTS); // update again the confirmed TS
             return newTS;
         } catch (IOException e) {
@@ -246,6 +308,11 @@ abstract public class ResourceStore {
         }
     }
 
+    private long checkAndPutResourceCheckpoint(String resPath, byte[] content, long oldTS, long newTS) throws IOException {
+        beforeChange(resPath);
+        return checkAndPutResourceImpl(resPath, content, oldTS, newTS);
+    }
+
     /**
      * checks old timestamp when overwriting existing
      */
@@ -255,8 +322,13 @@ abstract public class ResourceStore {
      * delete a resource, does nothing on a folder
      */
     final public void deleteResource(String resPath) throws IOException {
-        logger.debug("Deleting resource " + resPath + " (Store " + kylinConfig.getMetadataUrl() + ")");
-        deleteResourceImpl(norm(resPath));
+        logger.trace("Deleting resource " + resPath + " (Store " + kylinConfig.getMetadataUrl() + ")");
+        deleteResourceCheckpoint(norm(resPath));
+    }
+
+    private void deleteResourceCheckpoint(String resPath) throws IOException {
+        beforeChange(resPath);
+        deleteResourceImpl(resPath);
     }
 
     abstract protected void deleteResourceImpl(String resPath) throws IOException;
@@ -279,6 +351,87 @@ abstract public class ResourceStore {
         if (resPath.startsWith("/") == false)
             resPath = "/" + resPath;
         return resPath;
+    }
+
+    // ============================================================================
+
+    ThreadLocal<Checkpoint> checkpointing = new ThreadLocal<>();
+
+    public Checkpoint checkpoint() {
+        Checkpoint cp = checkpointing.get();
+        if (cp != null)
+            throw new IllegalStateException("A checkpoint has been open for this thread: " + cp);
+
+        cp = new Checkpoint();
+        checkpointing.set(cp);
+        return cp;
+    }
+
+    private void beforeChange(String resPath) throws IOException {
+        Checkpoint cp = checkpointing.get();
+        if (cp != null)
+            cp.beforeChange(resPath);
+    }
+
+    public class Checkpoint implements Closeable {
+
+        LinkedHashMap<String, byte[]> origResData = new LinkedHashMap<>();
+        LinkedHashMap<String, Long> origResTimestamp = new LinkedHashMap<>();
+
+        private void beforeChange(String resPath) throws IOException {
+            if (origResData.containsKey(resPath))
+                return;
+
+            RawResource raw = getResourceImpl(resPath);
+            if (raw == null) {
+                origResData.put(resPath, null);
+                origResTimestamp.put(resPath, null);
+            } else {
+                origResData.put(resPath, readAll(raw.inputStream));
+                origResTimestamp.put(resPath, raw.timestamp);
+            }
+        }
+
+        private byte[] readAll(InputStream inputStream) throws IOException {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            IOUtils.copy(inputStream, out);
+            inputStream.close();
+            out.close();
+            return out.toByteArray();
+        }
+
+        public void rollback() {
+            checkThread();
+
+            for (String resPath : origResData.keySet()) {
+                logger.debug("Rollbacking " + resPath);
+                try {
+                    byte[] data = origResData.get(resPath);
+                    Long ts = origResTimestamp.get(resPath);
+                    if (data == null || ts == null)
+                        deleteResourceImpl(resPath);
+                    else
+                        putResourceImpl(resPath, new ByteArrayInputStream(data), ts);
+                } catch (IOException ex) {
+                    logger.error("Failed to rollback " + resPath, ex);
+                }
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            checkThread();
+
+            origResData = null;
+            origResTimestamp = null;
+            checkpointing.set(null);
+        }
+
+        private void checkThread() {
+            Checkpoint cp = checkpointing.get();
+            if (this != cp)
+                throw new IllegalStateException();
+        }
     }
 
     // ============================================================================
@@ -311,4 +464,35 @@ abstract public class ResourceStore {
         return collector;
     }
 
+    public static String dumpResources(KylinConfig kylinConfig, Collection<String> dumpList) throws IOException {
+        File tmp = File.createTempFile("kylin_job_meta", "");
+        FileUtils.forceDelete(tmp); // we need a directory, so delete the file first
+
+        File metaDir = new File(tmp, "meta");
+        metaDir.mkdirs();
+
+        // write kylin.properties
+        File kylinPropsFile = new File(metaDir, "kylin.properties");
+        kylinConfig.exportToFile(kylinPropsFile);
+
+        ResourceStore from = ResourceStore.getStore(kylinConfig);
+        KylinConfig localConfig = KylinConfig.createInstanceFromUri(metaDir.getAbsolutePath());
+        ResourceStore to = ResourceStore.getStore(localConfig);
+        for (String path : dumpList) {
+            RawResource res = from.getResource(path);
+            if (res == null)
+                throw new IllegalStateException("No resource found at -- " + path);
+            to.putResource(path, res.inputStream, res.timestamp);
+            res.inputStream.close();
+        }
+
+        String metaDirURI = OptionsHelper.convertToFileURL(metaDir.getAbsolutePath());
+        if (metaDirURI.startsWith("/")) // note Path on windows is like "d:/../..."
+            metaDirURI = "file://" + metaDirURI;
+        else
+            metaDirURI = "file:///" + metaDirURI;
+        logger.info("meta dir is: " + metaDirURI);
+
+        return metaDirURI;
+    }
 }

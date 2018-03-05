@@ -1,5 +1,4 @@
 {
- 
   "uuid": "9c0f4ee2-1ccb-4b07-a38e-4c298563e0f7",
   "name": "test_kylin_left_join_model_desc",
   "lookups": [
@@ -7,8 +6,12 @@
       "table": "EDW.TEST_CAL_DT",
       "join": {
         "type": "left",
-        "primary_key": ["CAL_DT"],
-        "foreign_key": ["CAL_DT"]
+        "primary_key": [
+          "CAL_DT"
+        ],
+        "foreign_key": [
+          "CAL_DT"
+        ]
       }
     },
     {
@@ -29,16 +32,24 @@
       "table": "EDW.TEST_SITES",
       "join": {
         "type": "left",
-        "primary_key": ["SITE_ID"],
-        "foreign_key": ["LSTG_SITE_ID"]
+        "primary_key": [
+          "SITE_ID"
+        ],
+        "foreign_key": [
+          "LSTG_SITE_ID"
+        ]
       }
     },
     {
       "table": "EDW.TEST_SELLER_TYPE_DIM",
       "join": {
         "type": "left",
-        "primary_key": ["SELLER_TYPE_CD"],
-        "foreign_key": ["SLR_SEGMENT_CD"]
+        "primary_key": [
+          "SELLER_TYPE_CD"
+        ],
+        "foreign_key": [
+          "SLR_SEGMENT_CD"
+        ]
       }
     }
   ],
@@ -46,12 +57,14 @@
     {
       "table": "default.test_kylin_fact",
       "columns": [
-        "TRANS_ID",
-        "CAL_DT",
         "lstg_format_name",
         "LSTG_SITE_ID",
         "SLR_SEGMENT_CD",
-        "SELLER_ID"
+        "TRANS_ID",
+        "CAL_DT",
+        "LEAF_CATEG_ID",
+        "SELLER_ID",
+        "ORDER_ID"
       ]
     },
     {
@@ -82,12 +95,18 @@
         "seller_type_cd",
         "seller_type_desc"
       ]
+    },
+    {
+      "table": "edw.test_cal_dt",
+      "columns": [
+        "cal_dt",
+        "week_beg_dt"
+      ]
     }
   ],
   "metrics": [
     "PRICE",
-    "ITEM_COUNT",
-    "SELLER_ID"
+    "ITEM_COUNT"
   ],
   "last_modified": 1422435345352,
   "fact_table": "DEFAULT.TEST_KYLIN_FACT",

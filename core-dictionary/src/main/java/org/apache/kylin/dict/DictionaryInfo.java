@@ -21,7 +21,8 @@ package org.apache.kylin.dict;
 import org.apache.kylin.common.persistence.ResourceStore;
 import org.apache.kylin.common.persistence.RootPersistentEntity;
 import org.apache.kylin.common.util.Dictionary;
-import org.apache.kylin.source.ReadableTable.TableSignature;
+import org.apache.kylin.metadata.model.ColumnDesc;
+import org.apache.kylin.source.IReadableTable.TableSignature;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
@@ -46,11 +47,19 @@ public class DictionaryInfo extends RootPersistentEntity {
     @JsonProperty("cardinality")
     private int cardinality;
 
-    transient Dictionary<?> dictionaryObject;
+    transient Dictionary<String> dictionaryObject;
 
     public DictionaryInfo() {
     }
 
+    public DictionaryInfo(ColumnDesc col, String dataType) {
+        this(col.getTable().getIdentity(), col.getName(), col.getZeroBasedIndex(), dataType, null);
+    }
+
+    public DictionaryInfo(ColumnDesc col, String dataType, TableSignature input) {
+        this(col.getTable().getIdentity(), col.getName(), col.getZeroBasedIndex(), dataType, input);
+    }
+    
     public DictionaryInfo(String sourceTable, String sourceColumn, int sourceColumnIndex, String dataType, TableSignature input) {
 
         this.updateRandomUuid();
@@ -139,11 +148,11 @@ public class DictionaryInfo extends RootPersistentEntity {
         this.dictionaryClass = dictionaryClass;
     }
 
-    public Dictionary<?> getDictionaryObject() {
+    public Dictionary<String> getDictionaryObject() {
         return dictionaryObject;
     }
 
-    public void setDictionaryObject(Dictionary<?> dictionaryObject) {
+    public void setDictionaryObject(Dictionary<String> dictionaryObject) {
         this.dictionaryObject = dictionaryObject;
     }
 

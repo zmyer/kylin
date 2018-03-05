@@ -20,12 +20,9 @@ package org.apache.kylin.storage.hbase.cube;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -38,11 +35,9 @@ import org.apache.kylin.cube.model.CubeDesc;
 import org.apache.kylin.measure.MeasureAggregator;
 import org.apache.kylin.measure.MeasureIngester;
 import org.apache.kylin.measure.MeasureType;
-import org.apache.kylin.metadata.MetadataManager;
 import org.apache.kylin.metadata.model.FunctionDesc;
 import org.apache.kylin.metadata.model.MeasureDesc;
 import org.apache.kylin.metadata.model.TblColRef;
-import org.apache.kylin.storage.IStorageQuery;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -69,7 +64,6 @@ public class MeasureTypeOnlyAggrInBaseTest extends LocalFileMetadataTestCase {
     @Before
     public void setUp() throws Exception {
         this.createTestMetadata();
-        MetadataManager.clearCache();
 
         cube = getTestKylinCubeWithSeller();
         cubeDesc = cube.getDescriptor();
@@ -93,29 +87,12 @@ public class MeasureTypeOnlyAggrInBaseTest extends LocalFileMetadataTestCase {
     }
 
     @Test
-    public void testIdentifyCuboidV1() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException, NoSuchFieldException {
-        IStorageQuery query = new org.apache.kylin.storage.hbase.cube.v1.CubeStorageQuery(cube);
-        long baseCuboidId = cubeDesc.getRowkey().getFullMask();
-
-        Method method = query.getClass().getDeclaredMethod("identifyCuboid", Set.class, Collection.class);
-        method.setAccessible(true);
-
-        Object ret = method.invoke(query, Sets.newHashSet(), Lists.newArrayList());
-
-        assertTrue(ret instanceof Cuboid);
-        assertNotEquals(baseCuboidId, ((Cuboid) ret).getId());
-
-        ret = method.invoke(query, dimensions, metrics);
-        assertEquals(baseCuboidId, ((Cuboid) ret).getId());
-    }
-
-    @Test
     public void testIdentifyCuboidV2() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException, NoSuchFieldException {
         CubeDesc cubeDesc = cube.getDescriptor();
-        Cuboid ret = Cuboid.identifyCuboid(cubeDesc, Sets.<TblColRef> newHashSet(), Lists.<FunctionDesc> newArrayList());
+        Cuboid ret = Cuboid.findCuboid(cube.getCuboidScheduler(), Sets.<TblColRef> newHashSet(), Lists.<FunctionDesc> newArrayList());
         long baseCuboidId = cubeDesc.getRowkey().getFullMask();
         assertNotEquals(baseCuboidId, ret.getId());
-        ret = Cuboid.identifyCuboid(cubeDesc, dimensions, metrics);
+        ret = Cuboid.findCuboid(cube.getCuboidScheduler(), dimensions, metrics);
         assertEquals(baseCuboidId, ret.getId());
     }
 
@@ -134,11 +111,6 @@ public class MeasureTypeOnlyAggrInBaseTest extends LocalFileMetadataTestCase {
         @Override
         public boolean needRewrite() {
             return false;
-        }
-
-        @Override
-        public Class<?> getRewriteCalciteAggrFunctionClass() {
-            return null;
         }
 
         @Override

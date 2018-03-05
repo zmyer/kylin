@@ -20,32 +20,35 @@ package org.apache.kylin.storage.hbase.util;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.Admin;
+import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.HBaseAdmin;
-import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Table;
 import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.common.StorageURL;
 import org.apache.kylin.common.persistence.JsonSerializer;
 import org.apache.kylin.common.persistence.RawResource;
 import org.apache.kylin.common.persistence.ResourceStore;
 import org.apache.kylin.common.persistence.Serializer;
-import org.apache.kylin.common.restclient.Broadcaster;
 import org.apache.kylin.common.restclient.RestClient;
 import org.apache.kylin.common.util.Bytes;
 import org.apache.kylin.common.util.Dictionary;
+import org.apache.kylin.common.util.HadoopUtil;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.cube.CubeSegment;
@@ -55,9 +58,10 @@ import org.apache.kylin.dict.DictionaryManager;
 import org.apache.kylin.dict.lookup.SnapshotManager;
 import org.apache.kylin.dict.lookup.SnapshotTable;
 import org.apache.kylin.engine.mr.JobBuilderSupport;
+import org.apache.kylin.metadata.cachesync.Broadcaster;
 import org.apache.kylin.metadata.model.DataModelDesc;
 import org.apache.kylin.metadata.model.SegmentStatusEnum;
-import org.apache.kylin.metadata.model.TableDesc;
+import org.apache.kylin.metadata.model.TableRef;
 import org.apache.kylin.metadata.project.ProjectInstance;
 import org.apache.kylin.metadata.realization.IRealizationConstants;
 import org.apache.kylin.metadata.realization.RealizationStatusEnum;
@@ -74,6 +78,7 @@ import org.slf4j.LoggerFactory;
  * Note that different envs are assumed to share the same hadoop cluster,
  * including hdfs, hbase and hive.
  */
+@Deprecated
 public class CubeMigrationCLI {
 
     private static final Logger logger = LoggerFactory.getLogger(CubeMigrationCLI.class);
@@ -84,13 +89,14 @@ public class CubeMigrationCLI {
     private static ResourceStore srcStore;
     private static ResourceStore dstStore;
     private static FileSystem hdfsFS;
-    private static HBaseAdmin hbaseAdmin;
+    private static Admin hbaseAdmin;
 
     public static final String ACL_INFO_FAMILY = "i";
     private static final String ACL_TABLE_NAME = "_acl";
     private static final String ACL_INFO_FAMILY_PARENT_COLUMN = "p";
 
     public static void main(String[] args) throws IOException, InterruptedException {
+        logger.warn("org.apache.kylin.storage.hbase.util.CubeMigrationCLI is deprecated, use org.apache.kylin.tool.CubeMigrationCLI instead");
 
         if (args.length != 8) {
             usage();
@@ -128,17 +134,17 @@ public class CubeMigrationCLI {
 
         checkAndGetHbaseUrl();
 
-        Configuration conf = HBaseConnection.getCurrentHBaseConfiguration();
-        hbaseAdmin = new HBaseAdmin(conf);
+        Connection conn = HBaseConnection.get(srcConfig.getStorageUrl());
+        hbaseAdmin = conn.getAdmin();
 
-        hdfsFS = FileSystem.get(new Configuration());
+        hdfsFS = HadoopUtil.getWorkingFileSystem();
 
         operations = new ArrayList<Opt>();
 
         copyFilesInMetaStore(cube, overwriteIfExists);
         renameFoldersInHdfs(cube);
         changeHtableHost(cube);
-        addCubeIntoProject(cubeName, projectName);
+        addCubeAndModelIntoProject(cube, cubeName, projectName);
         if (Boolean.parseBoolean(copyAcl) == true) {
             copyACL(cube, projectName);
         }
@@ -166,26 +172,15 @@ public class CubeMigrationCLI {
         checkCLI.execute(cubeName);
     }
 
-    private static String checkAndGetHbaseUrl() {
-        String srcMetadataUrl = srcConfig.getMetadataUrl();
-        String dstMetadataUrl = dstConfig.getMetadataUrl();
+    private static void checkAndGetHbaseUrl() {
+        StorageURL srcMetadataUrl = srcConfig.getMetadataUrl();
+        StorageURL dstMetadataUrl = dstConfig.getMetadataUrl();
 
         logger.info("src metadata url is " + srcMetadataUrl);
         logger.info("dst metadata url is " + dstMetadataUrl);
 
-        int srcIndex = srcMetadataUrl.toLowerCase().indexOf("hbase");
-        int dstIndex = dstMetadataUrl.toLowerCase().indexOf("hbase");
-        if (srcIndex < 0 || dstIndex < 0)
+        if (!"hbase".equals(srcMetadataUrl.getScheme()) || !"hbase".equals(dstMetadataUrl.getScheme()))
             throw new IllegalStateException("Both metadata urls should be hbase metadata url");
-
-        String srcHbaseUrl = srcMetadataUrl.substring(srcIndex).trim();
-        String dstHbaseUrl = dstMetadataUrl.substring(dstIndex).trim();
-        if (!srcHbaseUrl.equalsIgnoreCase(dstHbaseUrl)) {
-            throw new IllegalStateException("hbase url not equal! ");
-        }
-
-        logger.info("hbase url is " + srcHbaseUrl.trim());
-        return srcHbaseUrl.trim();
     }
 
     private static void renameFoldersInHdfs(CubeInstance cube) {
@@ -213,7 +208,7 @@ public class CubeMigrationCLI {
     private static void copyFilesInMetaStore(CubeInstance cube, String overwriteIfExists) throws IOException {
 
         List<String> metaItems = new ArrayList<String>();
-        List<String> dictAndSnapshot = new ArrayList<String>();
+        Set<String> dictAndSnapshot = new HashSet<String>();
         listCubeRelatedResources(cube, metaItems, dictAndSnapshot);
 
         if (dstStore.exists(cube.getResourcePath()) && !overwriteIfExists.equalsIgnoreCase("true"))
@@ -228,27 +223,27 @@ public class CubeMigrationCLI {
         }
     }
 
-    private static void addCubeIntoProject(String cubeName, String projectName) throws IOException {
+    private static void addCubeAndModelIntoProject(CubeInstance srcCube, String cubeName, String projectName) throws IOException {
         String projectResPath = ProjectInstance.concatResourcePath(projectName);
         if (!dstStore.exists(projectResPath))
             throw new IllegalStateException("The target project " + projectName + "does not exist");
 
-        operations.add(new Opt(OptType.ADD_INTO_PROJECT, new Object[] { cubeName, projectName }));
+        operations.add(new Opt(OptType.ADD_INTO_PROJECT, new Object[] { srcCube, cubeName, projectName }));
     }
 
     private static void purgeAndDisable(String cubeName) throws IOException {
         operations.add(new Opt(OptType.PURGE_AND_DISABLE, new Object[] { cubeName }));
     }
 
-    private static void listCubeRelatedResources(CubeInstance cube, List<String> metaResource, List<String> dictAndSnapshot) throws IOException {
+    private static void listCubeRelatedResources(CubeInstance cube, List<String> metaResource, Set<String> dictAndSnapshot) throws IOException {
 
         CubeDesc cubeDesc = cube.getDescriptor();
         metaResource.add(cube.getResourcePath());
         metaResource.add(cubeDesc.getResourcePath());
         metaResource.add(DataModelDesc.concatResourcePath(cubeDesc.getModelName()));
 
-        for (String table : cubeDesc.getModel().getAllTables()) {
-            metaResource.add(TableDesc.concatResourcePath(table.toUpperCase()));
+        for (TableRef table : cubeDesc.getModel().getAllTables()) {
+            metaResource.add(table.getTableDesc().getResourcePath());
         }
 
         for (CubeSegment segment : cube.getSegments()) {
@@ -321,8 +316,8 @@ public class CubeMigrationCLI {
 
         switch (opt.type) {
         case CHANGE_HTABLE_HOST: {
-            String tableName = (String) opt.params[0];
-            HTableDescriptor desc = hbaseAdmin.getTableDescriptor(TableName.valueOf(tableName));
+            TableName tableName = TableName.valueOf((String) opt.params[0]);
+            HTableDescriptor desc = hbaseAdmin.getTableDescriptor(tableName);
             hbaseAdmin.disableTable(tableName);
             desc.setValue(IRealizationConstants.HTableTag, dstConfig.getMetadataUrlPrefix());
             hbaseAdmin.modifyTable(tableName, desc);
@@ -419,13 +414,19 @@ public class CubeMigrationCLI {
             break;
         }
         case ADD_INTO_PROJECT: {
-            String cubeName = (String) opt.params[0];
-            String projectName = (String) opt.params[1];
+            CubeInstance srcCube = (CubeInstance) opt.params[0];
+            String cubeName = (String) opt.params[1];
+            String projectName = (String) opt.params[2];
+            String modelName = srcCube.getDescriptor().getModelName();
+
             String projectResPath = ProjectInstance.concatResourcePath(projectName);
             Serializer<ProjectInstance> projectSerializer = new JsonSerializer<ProjectInstance>(ProjectInstance.class);
             ProjectInstance project = dstStore.getResource(projectResPath, ProjectInstance.class, projectSerializer);
+
+            project.addModel(modelName);
             project.removeRealization(RealizationType.CUBE, cubeName);
             project.addRealizationEntry(RealizationType.CUBE, cubeName);
+
             dstStore.putResource(projectResPath, project, projectSerializer);
             logger.info("Project instance for " + projectName + " is corrected");
             break;
@@ -438,11 +439,11 @@ public class CubeMigrationCLI {
             Serializer<ProjectInstance> projectSerializer = new JsonSerializer<ProjectInstance>(ProjectInstance.class);
             ProjectInstance project = dstStore.getResource(projectResPath, ProjectInstance.class, projectSerializer);
             String projUUID = project.getUuid();
-            HTableInterface srcAclHtable = null;
-            HTableInterface destAclHtable = null;
+            Table srcAclHtable = null;
+            Table destAclHtable = null;
             try {
-                srcAclHtable = HBaseConnection.get(srcConfig.getStorageUrl()).getTable(srcConfig.getMetadataUrlPrefix() + ACL_TABLE_NAME);
-                destAclHtable = HBaseConnection.get(dstConfig.getStorageUrl()).getTable(dstConfig.getMetadataUrlPrefix() + ACL_TABLE_NAME);
+                srcAclHtable = HBaseConnection.get(srcConfig.getStorageUrl()).getTable(TableName.valueOf(srcConfig.getMetadataUrlPrefix() + ACL_TABLE_NAME));
+                destAclHtable = HBaseConnection.get(dstConfig.getStorageUrl()).getTable(TableName.valueOf(dstConfig.getMetadataUrlPrefix() + ACL_TABLE_NAME));
 
                 // cube acl
                 Result result = srcAclHtable.get(new Get(Bytes.toBytes(cubeId)));
@@ -462,7 +463,6 @@ public class CubeMigrationCLI {
                         destAclHtable.put(put);
                     }
                 }
-                destAclHtable.flushCommits();
             } finally {
                 IOUtils.closeQuietly(srcAclHtable);
                 IOUtils.closeQuietly(destAclHtable);
@@ -493,8 +493,8 @@ public class CubeMigrationCLI {
 
         switch (opt.type) {
         case CHANGE_HTABLE_HOST: {
-            String tableName = (String) opt.params[0];
-            HTableDescriptor desc = hbaseAdmin.getTableDescriptor(TableName.valueOf(tableName));
+            TableName tableName = TableName.valueOf((String) opt.params[0]);
+            HTableDescriptor desc = hbaseAdmin.getTableDescriptor(tableName);
             hbaseAdmin.disableTable(tableName);
             desc.setValue(IRealizationConstants.HTableTag, srcConfig.getMetadataUrlPrefix());
             hbaseAdmin.modifyTable(tableName, desc);
@@ -528,13 +528,12 @@ public class CubeMigrationCLI {
         case COPY_ACL: {
             String cubeId = (String) opt.params[0];
             String modelId = (String) opt.params[1];
-            HTableInterface destAclHtable = null;
+            Table destAclHtable = null;
             try {
-                destAclHtable = HBaseConnection.get(dstConfig.getStorageUrl()).getTable(dstConfig.getMetadataUrlPrefix() + ACL_TABLE_NAME);
+                destAclHtable = HBaseConnection.get(dstConfig.getStorageUrl()).getTable(TableName.valueOf(dstConfig.getMetadataUrlPrefix() + ACL_TABLE_NAME));
 
                 destAclHtable.delete(new Delete(Bytes.toBytes(cubeId)));
                 destAclHtable.delete(new Delete(Bytes.toBytes(modelId)));
-                destAclHtable.flushCommits();
             } finally {
                 IOUtils.closeQuietly(destAclHtable);
             }
@@ -551,13 +550,13 @@ public class CubeMigrationCLI {
         }
     }
 
-    private static void updateMeta(KylinConfig config){
+    private static void updateMeta(KylinConfig config) {
         String[] nodes = config.getRestServers();
         for (String node : nodes) {
             RestClient restClient = new RestClient(node);
             try {
                 logger.info("update meta cache for " + node);
-                restClient.wipeCache(Broadcaster.TYPE.ALL.getType(), Broadcaster.EVENT.UPDATE.getType(), "all");
+                restClient.wipeCache(Broadcaster.SYNC_ALL, Broadcaster.Event.UPDATE.getType(), Broadcaster.SYNC_ALL);
             } catch (IOException e) {
                 logger.error(e.getMessage());
             }

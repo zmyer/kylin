@@ -43,6 +43,7 @@ import com.google.common.collect.Sets;
 
 /**
  */
+@Deprecated
 public class MetadataCleanupJob extends AbstractHadoopJob {
 
     @SuppressWarnings("static-access")
@@ -54,7 +55,7 @@ public class MetadataCleanupJob extends AbstractHadoopJob {
 
     private KylinConfig config = null;
 
-    public static final long TIME_THREADSHOLD = 2 * 24 * 3600 * 1000L; // 2 days
+    public static final long TIME_THREADSHOLD = 1 * 3600 * 1000L; // 1 hour
     public static final long TIME_THREADSHOLD_FOR_JOB = 30 * 24 * 3600 * 1000L; // 30 days
 
     /*
@@ -67,23 +68,18 @@ public class MetadataCleanupJob extends AbstractHadoopJob {
         Options options = new Options();
 
         logger.info("jobs args: " + Arrays.toString(args));
-        try {
-            options.addOption(OPTION_DELETE);
-            parseOptions(options, args);
+        options.addOption(OPTION_DELETE);
+        parseOptions(options, args);
 
-            logger.info("options: '" + getOptionsAsString() + "'");
-            logger.info("delete option value: '" + getOptionValue(OPTION_DELETE) + "'");
-            delete = Boolean.parseBoolean(getOptionValue(OPTION_DELETE));
+        logger.info("options: '" + getOptionsAsString() + "'");
+        logger.info("delete option value: '" + getOptionValue(OPTION_DELETE) + "'");
+        delete = Boolean.parseBoolean(getOptionValue(OPTION_DELETE));
 
-            config = KylinConfig.getInstanceFromEnv();
+        config = KylinConfig.getInstanceFromEnv();
 
-            cleanup();
+        cleanup();
 
-            return 0;
-        } catch (Exception e) {
-            printUsage(options);
-            throw e;
-        }
+        return 0;
     }
 
     private ResourceStore getStore() {
@@ -179,6 +175,8 @@ public class MetadataCleanupJob extends AbstractHadoopJob {
     }
 
     public static void main(String[] args) throws Exception {
+        logger.warn("org.apache.kylin.engine.mr.steps.MetadataCleanupJob is deprecated, use org.apache.kylin.tool.MetadataCleanupJob instead");
+
         int exitCode = ToolRunner.run(new MetadataCleanupJob(), args);
         System.exit(exitCode);
     }

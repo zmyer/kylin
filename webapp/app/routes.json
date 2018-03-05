@@ -104,5 +104,21 @@
       "tab": "models",
       "controller": "ModelEditCtrl"
     }
+  },
+  {
+    "url": "/models/edit/:modelName/descriptionjson",
+    "params": {
+      "templateUrl": "partials/models/model_json_edit.html",
+      "tab": "models",
+      "controller": "ModelEditCtrl"
+    }
+  },
+  {
+    "url": "/dashboard",
+    "params": {
+      "templateUrl": "partials/dashboard/dashboard.html",
+      "tab": "dashboard",
+      "controller": "DashboardCtrl"
+    }
   }
 ]

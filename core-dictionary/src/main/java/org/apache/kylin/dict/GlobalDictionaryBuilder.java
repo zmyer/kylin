@@ -19,13 +19,11 @@
 package org.apache.kylin.dict;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.NavigableSet;
 
 import org.apache.kylin.common.KylinConfig;
-import org.apache.kylin.common.util.Bytes;
+import org.apache.kylin.common.lock.DistributedLock;
 import org.apache.kylin.common.util.Dictionary;
-import org.apache.kylin.metadata.MetadataManager;
+import org.apache.kylin.dict.global.AppendTrieDictionaryBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,50 +33,74 @@ import org.slf4j.LoggerFactory;
  * Created by sunyerui on 16/5/24.
  */
 public class GlobalDictionaryBuilder implements IDictionaryBuilder {
-    private static final Logger logger = LoggerFactory.getLogger(GlobalDictionaryBuilder.class);
+    private AppendTrieDictionaryBuilder builder;
+    private int baseId;
+
+    private DistributedLock lock;
+    private String sourceColumn;
+    private int counter;
+
+    private static Logger logger = LoggerFactory.getLogger(GlobalDictionaryBuilder.class);
 
     @Override
-    public Dictionary<String> build(DictionaryInfo dictInfo, IDictionaryValueEnumerator valueEnumerator, int baseId, int nSamples, ArrayList<String> returnSamples) throws IOException {
-        if (dictInfo == null) {
-            throw new IllegalArgumentException("GlobalDictinaryBuilder must used with an existing DictionaryInfo");
-        }
-        String dictDir = KylinConfig.getInstanceFromEnv().getHdfsWorkingDirectory() + "resources/GlobalDict" + dictInfo.getResourceDir() + "/";
+    public void init(DictionaryInfo dictInfo, int baseId, String hdfsDir) throws IOException {
+        sourceColumn = dictInfo.getSourceTable() + "_" + dictInfo.getSourceColumn();
+        lock = KylinConfig.getInstanceFromEnv().getDistributedLockFactory().lockForCurrentThread();
+        lock.lock(getLockPath(sourceColumn), Long.MAX_VALUE);
 
-        // Try to load the existing dict from cache, making sure there's only the same one object in memory
-        NavigableSet<String> dicts = MetadataManager.getInstance(KylinConfig.getInstanceFromEnv()).getStore().listResources(dictInfo.getResourceDir());
-        ArrayList<String> appendDicts = new ArrayList<>();
-        if (dicts != null && !dicts.isEmpty()) {
-            for (String dict : dicts) {
-                DictionaryInfo info = MetadataManager.getInstance(KylinConfig.getInstanceFromEnv()).getStore().getResource(dict, DictionaryInfo.class, DictionaryInfoSerializer.INFO_SERIALIZER);
-                if (info.getDictionaryClass().equals(AppendTrieDictionary.class.getName())) {
-                    appendDicts.add(dict);
-                }
+        int maxEntriesPerSlice = KylinConfig.getInstanceFromEnv().getAppendDictEntrySize();
+        if (hdfsDir == null) {
+            //build in Kylin job server
+            hdfsDir = KylinConfig.getInstanceFromEnv().getHdfsWorkingDirectory();
+        }
+        String baseDir = hdfsDir + "resources/GlobalDict" + dictInfo.getResourceDir() + "/";
+
+        try {
+            this.builder = new AppendTrieDictionaryBuilder(baseDir, maxEntriesPerSlice, true);
+        } catch (Throwable e) {
+            lock.unlock(getLockPath(sourceColumn));
+            throw new RuntimeException(String.format("Failed to create global dictionary on %s ", sourceColumn), e);
+        }
+        this.baseId = baseId;
+    }
+
+    @Override
+    public boolean addValue(String value) {
+        if (++counter % 1_000_000 == 0) {
+            if (lock.lock(getLockPath(sourceColumn))) {
+                logger.info("processed {} values for {}", counter, sourceColumn);
+            } else {
+                throw new RuntimeException("Failed to create global dictionary on " + sourceColumn + " This client doesn't keep the lock");
             }
         }
 
-        AppendTrieDictionary.Builder<String> builder;
-        if (appendDicts.isEmpty()) {
-            logger.info("GlobalDict {} is empty, create new one", dictInfo.getResourceDir());
-            builder = AppendTrieDictionary.Builder.create(dictDir);
-        } else if (appendDicts.size() == 1) {
-            logger.info("GlobalDict {} exist, append value", appendDicts.get(0));
-            AppendTrieDictionary dict = (AppendTrieDictionary) DictionaryManager.getInstance(KylinConfig.getInstanceFromEnv()).getDictionary(appendDicts.get(0));
-            builder = AppendTrieDictionary.Builder.create(dict);
-        } else {
-            throw new IllegalStateException(String.format("GlobalDict %s should have 0 or 1 append dict but %d", dictInfo.getResourceDir(), appendDicts.size()));
+        if (value == null) {
+            return false;
         }
 
-        byte[] value;
-        while (valueEnumerator.moveNext()) {
-            value = valueEnumerator.current();
-            if (value == null) {
-                continue;
-            }
-            String v = Bytes.toString(value);
-            builder.addValue(v);
-            if (returnSamples.size() < nSamples && returnSamples.contains(v) == false)
-                returnSamples.add(v);
+        try {
+            builder.addValue(value);
+        } catch (Throwable e) {
+            lock.unlock(getLockPath(sourceColumn));
+            throw new RuntimeException(String.format("Failed to create global dictionary on %s ", sourceColumn), e);
         }
-        return builder.build(baseId);
+
+        return true;
+    }
+
+    @Override
+    public Dictionary<String> build() throws IOException {
+        try {
+            if (lock.lock(getLockPath(sourceColumn))) {
+                return builder.build(baseId);
+            }
+        } finally {
+            lock.unlock(getLockPath(sourceColumn));
+        }
+        return new AppendTrieDictionary<>();
+    }
+
+    private String getLockPath(String pathName) {
+        return "/dict/" + pathName + "/lock";
     }
 }

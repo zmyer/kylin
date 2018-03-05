@@ -28,8 +28,6 @@ public class ByteArray implements Comparable<ByteArray>, Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    public static final ByteArray EMPTY = new ImmutableByteArray();
-
     public static ByteArray allocate(int length) {
         return new ByteArray(new byte[length]);
     }
@@ -76,40 +74,6 @@ public class ByteArray implements Comparable<ByteArray>, Serializable {
         return length;
     }
 
-    public void set(byte[] array) {
-        set(array, 0, array.length);
-    }
-
-    public void set(byte[] array, int offset, int length) {
-        this.data = array;
-        this.offset = offset;
-        this.length = length;
-    }
-
-    public void set(ByteArray o) {
-        set(o.data, o.offset, o.length);
-    }
-
-    public void set(int offset, int length) {
-        this.offset = offset;
-        this.length = length;
-    }
-
-    public void setLength(int length) {
-        this.length = length;
-    }
-
-    public ByteArray copy() {
-        ByteArray copy;
-        if (data != null) {
-            copy = new ByteArray(length);
-        } else {
-            copy = new ByteArray(null);
-        }
-        copy.copyFrom(this);
-        return copy;
-    }
-
     //notice this will have a length header
     public void exportData(ByteBuffer out) {
         BytesUtil.writeByteArray(this.data, this.offset, this.length, out);
@@ -120,13 +84,6 @@ public class ByteArray implements Comparable<ByteArray>, Serializable {
         return new ByteArray(bytes);
     }
 
-    public void copyFrom(ByteArray other) {
-        if (other.data != null) {
-            System.arraycopy(other.array(), other.offset, data, offset, other.length);
-        }
-        this.length = other.length;
-    }
-
     public ByteBuffer asBuffer() {
         if (data == null)
             return null;
@@ -134,6 +91,24 @@ public class ByteArray implements Comparable<ByteArray>, Serializable {
             return ByteBuffer.wrap(data);
         else
             return ByteBuffer.wrap(data, offset, length).slice();
+    }
+
+    public byte[] toBytes() {
+        return Bytes.copy(this.array(), this.offset(), this.length());
+    }
+
+    public void setLength(int pos) {
+        this.length = pos;
+    }
+
+    public void reset(byte[] data, int offset, int len) {
+        this.data = data;
+        this.offset = offset;
+        this.length = len;
+    }
+
+    public byte get(int i) {
+        return data[offset + i];
     }
 
     @Override
@@ -193,50 +168,6 @@ public class ByteArray implements Comparable<ByteArray>, Serializable {
             return null;
         else
             return Bytes.toStringBinary(data, offset, length);
-    }
-
-    // ============================================================================
-
-    public static class ImmutableByteArray extends ByteArray {
-
-        private static final long serialVersionUID = 1L;
-
-        public ImmutableByteArray() {
-            super();
-        }
-
-        public ImmutableByteArray(byte[] data, int offset, int length) {
-            super(data, offset, length);
-        }
-
-        public ImmutableByteArray(byte[] data) {
-            super(data);
-        }
-
-        @Override
-        public void set(byte[] array) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void set(byte[] array, int offset, int length) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void set(ByteArray o) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void setLength(int length) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void copyFrom(ByteArray other) {
-            throw new UnsupportedOperationException();
-        }
     }
 
 }

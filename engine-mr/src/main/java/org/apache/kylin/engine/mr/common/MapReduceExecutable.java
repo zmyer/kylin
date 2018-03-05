@@ -22,22 +22,34 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Constructor;
+import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.GnuParser;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.OptionBuilder;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapreduce.Cluster;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.JobID;
 import org.apache.hadoop.mapreduce.JobStatus;
+import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.ClassUtil;
-import org.apache.kylin.engine.mr.HadoopUtil;
-import org.apache.kylin.engine.mr.MRUtil;
+import org.apache.kylin.common.util.HadoopUtil;
+import org.apache.kylin.cube.CubeManager;
+import org.apache.kylin.engine.mr.exception.MapReduceException;
 import org.apache.kylin.job.constant.ExecutableConstants;
 import org.apache.kylin.job.constant.JobStepStatusEnum;
 import org.apache.kylin.job.exception.ExecuteException;
 import org.apache.kylin.job.execution.AbstractExecutable;
 import org.apache.kylin.job.execution.ExecutableContext;
+import org.apache.kylin.job.execution.ExecutableManager;
 import org.apache.kylin.job.execution.ExecutableState;
 import org.apache.kylin.job.execution.ExecuteResult;
 import org.apache.kylin.job.execution.Output;
@@ -45,6 +57,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
 
 /**
  */
@@ -63,26 +76,28 @@ public class MapReduceExecutable extends AbstractExecutable {
 
     @Override
     protected void onExecuteStart(ExecutableContext executableContext) {
-        final Output output = executableManager.getOutput(getId());
+        final Output output = getOutput();
         if (output.getExtra().containsKey(START_TIME)) {
             final String mrJobId = output.getExtra().get(ExecutableConstants.MR_JOB_ID);
             if (mrJobId == null) {
-                executableManager.updateJobOutput(getId(), ExecutableState.RUNNING, null, null);
+                getManager().updateJobOutput(getId(), ExecutableState.RUNNING, null, null);
                 return;
             }
             try {
-                Configuration conf = HadoopUtil.getCurrentConfiguration();
+                Configuration conf = new Configuration(HadoopUtil.getCurrentConfiguration());
+                overwriteJobConf(conf, executableContext.getConfig(), getMapReduceParams().trim().split("\\s+"));
                 Job job = new Cluster(conf).getJob(JobID.forName(mrJobId));
                 if (job == null || job.getJobState() == JobStatus.State.FAILED) {
                     //remove previous mr job info
                     super.onExecuteStart(executableContext);
                 } else {
-                    executableManager.updateJobOutput(getId(), ExecutableState.RUNNING, null, null);
+                    getManager().updateJobOutput(getId(), ExecutableState.RUNNING, null, null);
                 }
-            } catch (IOException e) {
+            } catch (IOException | ParseException e) {
                 logger.warn("error get hadoop status");
                 super.onExecuteStart(executableContext);
             } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 logger.warn("error get hadoop status");
                 super.onExecuteStart(executableContext);
             }
@@ -94,30 +109,26 @@ public class MapReduceExecutable extends AbstractExecutable {
     @Override
     protected ExecuteResult doWork(ExecutableContext context) throws ExecuteException {
         final String mapReduceJobClass = getMapReduceJobClass();
-        String params = getMapReduceParams();
         Preconditions.checkNotNull(mapReduceJobClass);
-        Preconditions.checkNotNull(params);
         try {
             Job job;
-            final Map<String, String> extra = executableManager.getOutput(getId()).getExtra();
+            ExecutableManager mgr = getManager();
+            Configuration conf = new Configuration(HadoopUtil.getCurrentConfiguration());
+            String[] jobArgs = overwriteJobConf(conf, context.getConfig(), getMapReduceParams().trim().split("\\s+"));
+            final Map<String, String> extra = mgr.getOutput(getId()).getExtra();
             if (extra.containsKey(ExecutableConstants.MR_JOB_ID)) {
-                Configuration conf = HadoopUtil.getCurrentConfiguration();
                 job = new Cluster(conf).getJob(JobID.forName(extra.get(ExecutableConstants.MR_JOB_ID)));
                 logger.info("mr_job_id:" + extra.get(ExecutableConstants.MR_JOB_ID) + " resumed");
             } else {
-                final Constructor<? extends AbstractHadoopJob> constructor = ClassUtil.forName(mapReduceJobClass, AbstractHadoopJob.class).getConstructor();
+                final Constructor<? extends AbstractHadoopJob> constructor = ClassUtil
+                        .forName(mapReduceJobClass, AbstractHadoopJob.class).getConstructor();
                 final AbstractHadoopJob hadoopJob = constructor.newInstance();
-                hadoopJob.setConf(HadoopUtil.getCurrentConfiguration());
+                hadoopJob.setConf(conf);
                 hadoopJob.setAsync(true); // so the ToolRunner.run() returns right away
-                logger.info("parameters of the MapReduceExecutable:");
-                logger.info(params);
-                String[] args = params.trim().split("\\s+");
+                logger.info("parameters of the MapReduceExecutable: {}", getMapReduceParams());
                 try {
-                    //for async mr job, ToolRunner just return 0;
 
-                    // use this method instead of ToolRunner.run() because ToolRunner.run() is not thread-sale
-                    // Refer to: http://stackoverflow.com/questions/22462665/is-hadoops-toorunner-thread-safe
-                    MRUtil.runMRJob(hadoopJob, args);
+                    hadoopJob.run(jobArgs);
 
                     if (hadoopJob.isSkipped()) {
                         return new ExecuteResult(ExecuteResult.State.SUCCEED, "skipped");
@@ -129,47 +140,40 @@ public class MapReduceExecutable extends AbstractExecutable {
                     ex.printStackTrace(new PrintWriter(stringWriter));
                     log.append(stringWriter.toString()).append("\n");
                     log.append("result code:").append(2);
-                    return new ExecuteResult(ExecuteResult.State.ERROR, log.toString());
+                    return new ExecuteResult(ExecuteResult.State.ERROR, log.toString(), ex);
                 }
                 job = hadoopJob.getJob();
             }
             final StringBuilder output = new StringBuilder();
             final HadoopCmdOutput hadoopCmdOutput = new HadoopCmdOutput(job, output);
 
-            //            final String restStatusCheckUrl = getRestStatusCheckUrl(job, context.getConfig());
-            //            if (restStatusCheckUrl == null) {
-            //                logger.error("restStatusCheckUrl is null");
-            //                return new ExecuteResult(ExecuteResult.State.ERROR, "restStatusCheckUrl is null");
-            //            }
-            //            String mrJobId = hadoopCmdOutput.getMrJobId();
-            //            boolean useKerberosAuth = context.getConfig().isGetJobStatusWithKerberos();
-            //            HadoopStatusChecker statusChecker = new HadoopStatusChecker(restStatusCheckUrl, mrJobId, output, useKerberosAuth);
             JobStepStatusEnum status = JobStepStatusEnum.NEW;
-            while (!isDiscarded()) {
+            while (!isDiscarded() && !isPaused()) {
 
                 JobStepStatusEnum newStatus = HadoopJobStatusChecker.checkStatus(job, output);
                 if (status == JobStepStatusEnum.KILLED) {
-                    executableManager.updateJobOutput(getId(), ExecutableState.ERROR, hadoopCmdOutput.getInfo(), "killed by admin");
+                    mgr.updateJobOutput(getId(), ExecutableState.ERROR, hadoopCmdOutput.getInfo(), "killed by admin");
                     return new ExecuteResult(ExecuteResult.State.FAILED, "killed by admin");
                 }
-                if (status == JobStepStatusEnum.WAITING && (newStatus == JobStepStatusEnum.FINISHED || newStatus == JobStepStatusEnum.ERROR || newStatus == JobStepStatusEnum.RUNNING)) {
+                if (status == JobStepStatusEnum.WAITING && (newStatus == JobStepStatusEnum.FINISHED
+                        || newStatus == JobStepStatusEnum.ERROR || newStatus == JobStepStatusEnum.RUNNING)) {
                     final long waitTime = System.currentTimeMillis() - getStartTime();
                     setMapReduceWaitTime(waitTime);
                 }
-                executableManager.addJobInfo(getId(), hadoopCmdOutput.getInfo());
+                mgr.addJobInfo(getId(), hadoopCmdOutput.getInfo());
                 status = newStatus;
                 if (status.isComplete()) {
                     final Map<String, String> info = hadoopCmdOutput.getInfo();
                     readCounters(hadoopCmdOutput, info);
-                    executableManager.addJobInfo(getId(), info);
+                    mgr.addJobInfo(getId(), info);
 
                     if (status == JobStepStatusEnum.FINISHED) {
                         return new ExecuteResult(ExecuteResult.State.SUCCEED, output.toString());
                     } else {
-                        return new ExecuteResult(ExecuteResult.State.FAILED, output.toString());
+                        return ExecuteResult.createFailed(new MapReduceException(output.toString()));
                     }
                 }
-                Thread.sleep(context.getConfig().getYarnStatusCheckIntervalSeconds() * 1000);
+                Thread.sleep(context.getConfig().getYarnStatusCheckIntervalSeconds() * 1000L);
             }
 
             // try to kill running map-reduce job to release resources.
@@ -181,28 +185,32 @@ public class MapReduceExecutable extends AbstractExecutable {
                 }
             }
 
-            return new ExecuteResult(ExecuteResult.State.DISCARDED, output.toString());
+            if (isDiscarded()) {
+                return new ExecuteResult(ExecuteResult.State.DISCARDED, output.toString());
+            } else {
+                return new ExecuteResult(ExecuteResult.State.STOPPED, output.toString());
+            }
 
         } catch (ReflectiveOperationException e) {
             logger.error("error getMapReduceJobClass, class name:" + getParam(KEY_MR_JOB), e);
-            return new ExecuteResult(ExecuteResult.State.ERROR, e.getLocalizedMessage());
+            return ExecuteResult.createError(e);
         } catch (Exception e) {
             logger.error("error execute " + this.toString(), e);
-            return new ExecuteResult(ExecuteResult.State.ERROR, e.getLocalizedMessage());
+            return ExecuteResult.createError(e);
         }
     }
 
     private void readCounters(final HadoopCmdOutput hadoopCmdOutput, final Map<String, String> info) {
         hadoopCmdOutput.updateJobCounter();
         info.put(ExecutableConstants.SOURCE_RECORDS_COUNT, hadoopCmdOutput.getMapInputRecords());
-        info.put(ExecutableConstants.SOURCE_RECORDS_SIZE, hadoopCmdOutput.getHdfsBytesRead());
+        info.put(ExecutableConstants.SOURCE_RECORDS_SIZE, hadoopCmdOutput.getRawInputBytesRead());
         info.put(ExecutableConstants.HDFS_BYTES_WRITTEN, hadoopCmdOutput.getHdfsBytesWritten());
 
         String saveAs = getParam(KEY_COUNTER_SAVEAS);
         if (saveAs != null) {
             String[] saveAsNames = saveAs.split(",");
             saveCounterAs(hadoopCmdOutput.getMapInputRecords(), saveAsNames, 0, info);
-            saveCounterAs(hadoopCmdOutput.getHdfsBytesRead(), saveAsNames, 1, info);
+            saveCounterAs(hadoopCmdOutput.getRawInputBytesRead(), saveAsNames, 1, info);
             saveCounterAs(hadoopCmdOutput.getHdfsBytesWritten(), saveAsNames, 2, info);
         }
     }
@@ -237,11 +245,75 @@ public class MapReduceExecutable extends AbstractExecutable {
         setParam(KEY_PARAMS, param);
     }
 
-    public String getCounterSaveAs() {
-        return getParam(KEY_COUNTER_SAVEAS);
-    }
-
     public void setCounterSaveAs(String value) {
         setParam(KEY_COUNTER_SAVEAS, value);
+    }
+
+    @SuppressWarnings("static-access")
+    private static final Option OPTION_JOB_CONF = OptionBuilder.withArgName(BatchConstants.ARG_CONF).hasArg()
+            .isRequired(false).create(BatchConstants.ARG_CONF);
+
+    @SuppressWarnings("static-access")
+    private static final Option OPTION_CUBE_NAME = OptionBuilder.withArgName(BatchConstants.ARG_CUBE_NAME).hasArg()
+            .isRequired(false).create(BatchConstants.ARG_CUBE_NAME);
+
+    private String[] overwriteJobConf(Configuration conf, KylinConfig config, String[] jobParams)
+            throws ParseException {
+        Options options = new Options();
+        options.addOption(OPTION_JOB_CONF);
+        options.addOption(OPTION_CUBE_NAME);
+        CustomParser parser = new CustomParser();
+        CommandLine commandLine = parser.parse(options, jobParams);
+
+        String confFile = commandLine.getOptionValue(BatchConstants.ARG_CONF);
+        String cubeName = commandLine.getOptionValue(BatchConstants.ARG_CUBE_NAME);
+        List<String> remainingArgs = Lists.newArrayList();
+
+        if (StringUtils.isNotBlank(confFile)) {
+            conf.addResource(new Path(confFile));
+        }
+
+        if (StringUtils.isNotBlank(cubeName)) {
+            for (Map.Entry<String, String> entry : CubeManager.getInstance(config).getCube(cubeName).getConfig()
+                    .getMRConfigOverride().entrySet()) {
+                conf.set(entry.getKey(), entry.getValue());
+            }
+            if (conf.get("mapreduce.job.is-mem-hungry") != null
+                    && Boolean.valueOf(conf.get("mapreduce.job.is-mem-hungry"))) {
+                for (Map.Entry<String, String> entry : CubeManager.getInstance(config).getCube(cubeName).getConfig()
+                        .getMemHungryConfigOverride().entrySet()) {
+                    conf.set(entry.getKey(), entry.getValue());
+                }
+            }
+            remainingArgs.add("-" + BatchConstants.ARG_CUBE_NAME);
+            remainingArgs.add(cubeName);
+        }
+
+        remainingArgs.addAll(parser.getRemainingArgs());
+        return (String[]) remainingArgs.toArray(new String[remainingArgs.size()]);
+    }
+
+    private static class CustomParser extends GnuParser {
+        private List<String> remainingArgs;
+
+        public CustomParser() {
+            this.remainingArgs = Lists.newArrayList();
+        }
+
+        @Override
+        protected void processOption(final String arg, final ListIterator iter) throws ParseException {
+            boolean hasOption = getOptions().hasOption(arg);
+
+            if (hasOption) {
+                super.processOption(arg, iter);
+            } else {
+                remainingArgs.add(arg);
+                remainingArgs.add(iter.next().toString());
+            }
+        }
+
+        public List<String> getRemainingArgs() {
+            return remainingArgs;
+        }
     }
 }

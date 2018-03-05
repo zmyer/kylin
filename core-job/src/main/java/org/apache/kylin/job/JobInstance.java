@@ -58,6 +58,8 @@ public class JobInstance extends RootPersistentEntity implements Comparable<JobI
     private long execStartTime;
     @JsonProperty("exec_end_time")
     private long execEndTime;
+    @JsonProperty("exec_interrupt_time")
+    private long execInterruptTime;
     @JsonProperty("mr_waiting")
     private long mrWaiting = 0;
     @JsonManagedReference
@@ -70,7 +72,8 @@ public class JobInstance extends RootPersistentEntity implements Comparable<JobI
 
     public JobStep getRunningStep() {
         for (JobStep step : this.getSteps()) {
-            if (step.getStatus().equals(JobStepStatusEnum.RUNNING) || step.getStatus().equals(JobStepStatusEnum.WAITING)) {
+            if (step.getStatus().equals(JobStepStatusEnum.RUNNING)
+                    || step.getStatus().equals(JobStepStatusEnum.WAITING)) {
                 return step;
             }
         }
@@ -165,7 +168,7 @@ public class JobInstance extends RootPersistentEntity implements Comparable<JobI
         this.duration = duration;
     }
 
-    public String getRelatedCube() {
+    public String getRelatedCube() { // if model check, return model name.
         return relatedCube;
     }
 
@@ -200,6 +203,20 @@ public class JobInstance extends RootPersistentEntity implements Comparable<JobI
      */
     public long getExecEndTime() {
         return execEndTime;
+    }
+
+    /**
+     * @return the execInterruptTime
+     */
+    public long getExecInterruptTime() {
+        return execInterruptTime;
+    }
+
+    /**
+     * @param execInterruptTime the execInterruptTime to set
+     */
+    public void setExecInterruptTime(long execInterruptTime) {
+        this.execInterruptTime = execInterruptTime;
     }
 
     /**
@@ -286,7 +303,7 @@ public class JobInstance extends RootPersistentEntity implements Comparable<JobI
         private long execWaitTime;
 
         @JsonProperty("step_status")
-        private JobStepStatusEnum status;
+        private JobStepStatusEnum status = JobStepStatusEnum.PENDING;
 
         @JsonProperty("cmd_type")
         private JobStepCmdTypeEnum cmdType = JobStepCmdTypeEnum.SHELL_CMD_HADOOP;

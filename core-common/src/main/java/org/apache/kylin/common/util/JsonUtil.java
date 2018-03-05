@@ -32,6 +32,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
@@ -40,30 +41,42 @@ public class JsonUtil {
     // reuse the object mapper to save memory footprint
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final ObjectMapper indentMapper = new ObjectMapper();
+    private static final ObjectMapper typeMapper = new ObjectMapper();
 
     static {
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         indentMapper.configure(SerializationFeature.INDENT_OUTPUT, true);
+        typeMapper.enableDefaultTyping();
     }
 
-    public static <T> T readValue(File src, Class<T> valueType) throws IOException, JsonParseException, JsonMappingException {
+    public static <T> T readValue(File src, Class<T> valueType)
+            throws IOException, JsonParseException, JsonMappingException {
         return mapper.readValue(src, valueType);
     }
 
-    public static <T> T readValue(String content, Class<T> valueType) throws IOException, JsonParseException, JsonMappingException {
+    public static <T> T readValue(String content, Class<T> valueType)
+            throws IOException, JsonParseException, JsonMappingException {
         return mapper.readValue(content, valueType);
     }
 
-    public static <T> T readValue(Reader src, Class<T> valueType) throws IOException, JsonParseException, JsonMappingException {
+    public static <T> T readValue(Reader src, Class<T> valueType)
+            throws IOException, JsonParseException, JsonMappingException {
         return mapper.readValue(src, valueType);
     }
 
-    public static <T> T readValue(InputStream src, Class<T> valueType) throws IOException, JsonParseException, JsonMappingException {
+    public static <T> T readValue(InputStream src, Class<T> valueType)
+            throws IOException, JsonParseException, JsonMappingException {
         return mapper.readValue(src, valueType);
     }
 
-    public static <T> T readValue(byte[] src, Class<T> valueType) throws IOException, JsonParseException, JsonMappingException {
+    public static <T> T readValue(byte[] src, Class<T> valueType)
+            throws IOException, JsonParseException, JsonMappingException {
         return mapper.readValue(src, valueType);
+    }
+
+    public static <T> T readValue(String content, TypeReference<T> valueTypeRef)
+            throws IOException, JsonParseException, JsonMappingException {
+        return mapper.readValue(content, valueTypeRef);
     }
 
     public static Map<String, String> readValueAsMap(String content) throws IOException {
@@ -72,11 +85,21 @@ public class JsonUtil {
         return mapper.readValue(content, typeRef);
     }
 
-    public static void writeValueIndent(OutputStream out, Object value) throws IOException, JsonGenerationException, JsonMappingException {
+    public static JsonNode readValueAsTree(String content) throws IOException {
+        return mapper.readTree(content);
+    }
+
+    public static <T> T readValueWithTyping(InputStream src, Class<T> valueType) throws IOException {
+        return typeMapper.readValue(src, valueType);
+    }
+
+    public static void writeValueIndent(OutputStream out, Object value)
+            throws IOException, JsonGenerationException, JsonMappingException {
         indentMapper.writeValue(out, value);
     }
 
-    public static void writeValue(OutputStream out, Object value) throws IOException, JsonGenerationException, JsonMappingException {
+    public static void writeValue(OutputStream out, Object value)
+            throws IOException, JsonGenerationException, JsonMappingException {
         mapper.writeValue(out, value);
     }
 
@@ -92,4 +115,7 @@ public class JsonUtil {
         return indentMapper.writeValueAsString(value);
     }
 
+    public static void writeValueWithTyping(OutputStream out, Object value) throws IOException {
+        typeMapper.writeValue(out, value);
+    }
 }

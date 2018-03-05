@@ -24,10 +24,10 @@ import static org.junit.Assert.assertEquals;
 import org.apache.kylin.common.util.HBaseMetadataTestCase;
 import org.apache.kylin.dict.lookup.SnapshotManager;
 import org.apache.kylin.dict.lookup.SnapshotTable;
-import org.apache.kylin.metadata.MetadataManager;
+import org.apache.kylin.metadata.TableMetadataManager;
 import org.apache.kylin.metadata.model.TableDesc;
-import org.apache.kylin.source.ReadableTable;
-import org.apache.kylin.source.ReadableTable.TableReader;
+import org.apache.kylin.source.IReadableTable;
+import org.apache.kylin.source.IReadableTable.TableReader;
 import org.apache.kylin.source.SourceFactory;
 import org.junit.After;
 import org.junit.Before;
@@ -55,8 +55,8 @@ public class ITSnapshotManagerTest extends HBaseMetadataTestCase {
     @Test
     public void basicTest() throws Exception {
         String tableName = "EDW.TEST_SITES";
-        TableDesc tableDesc = MetadataManager.getInstance(getTestConfig()).getTableDesc(tableName);
-        ReadableTable hiveTable = SourceFactory.createReadableTable(tableDesc);
+        TableDesc tableDesc = TableMetadataManager.getInstance(getTestConfig()).getTableDesc(tableName, "default");
+        IReadableTable hiveTable = SourceFactory.createReadableTable(tableDesc);
         String snapshotPath = snapshotMgr.buildSnapshot(hiveTable, tableDesc).getResourcePath();
 
         snapshotMgr.wipeoutCache();
